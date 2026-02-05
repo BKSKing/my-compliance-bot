@@ -3,3 +3,7 @@ streamlit
 groq
 
 pypdf2
+
+pandas
+
+reportlab
