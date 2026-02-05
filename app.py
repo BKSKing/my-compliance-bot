@@ -1,33 +1,44 @@
 import streamlit as st
 from groq import Groq
+from PyPDF2 import PdfReader
 
 # Page Setup
 st.set_page_config(page_title="ComplianceBot AI", page_icon="🛡️")
 st.title("🛡️ ComplianceBot AI")
-st.subheader("International Tax & Compliance Scanner")
+st.subheader("PDF Invoice Scanner (Global Compliance)")
 
 # Sidebar for API Key
-api_key = st.sidebar.text_input("Apni Groq API Key yahan daalein:", type="password")
+api_key = st.sidebar.text_input("Apni Groq API Key daalein:", type="password")
+
+def extract_text_from_pdf(pdf_file):
+    reader = PdfReader(pdf_file)
+    text = ""
+    for page in reader.pages:
+        text += page.extract_text()
+    return text
 
 if api_key:
     client = Groq(api_key=api_key)
     
-    # Input Area
-    invoice_text = st.text_area("Invoice ka text yahan paste karein:", placeholder="E.g. Invoice #123, Amount $5000, From India to Germany...", height=200)
+    # PDF Upload Option
+    uploaded_file = st.file_uploader("Apna Invoice (PDF) upload karein", type="pdf")
 
-    if st.button("Scan for Risks"):
-        if invoice_text:
+    if uploaded_file is not None:
+        with st.spinner("PDF read kiya ja raha hai..."):
+            invoice_text = extract_text_from_pdf(uploaded_file)
+            st.info("PDF scan ho gaya. Ab AI analyze kar raha hai...")
+
+        if st.button("Analyze Compliance"):
             with st.spinner("AI rules check kar raha hai..."):
                 prompt = f"""
-                You are a Global Trade Compliance Expert. 
-                Analyze this invoice text and identify:
-                1. Potential Tax Violations (VAT/GST/Digital Tax).
-                2. Missing Mandatory Information (Tax ID, Address, etc.).
-                3. Environmental/Green Regulation risks (2026 standards like CBAM).
+                Analyze this invoice for global trade compliance:
+                1. Identify potential Tax/VAT/GST risks.
+                2. Check for missing mandatory fields (Tax IDs, addresses).
+                3. Check for 2026 Environmental/Green Regulation (CBAM) compliance.
                 
                 Invoice Text: {invoice_text}
                 
-                Provide a simple 'Risk Score' (0-10) and 'Action Steps' in bullet points.
+                Provide a Risk Score (0-10) and specific Action Steps.
                 """
                 
                 try:
@@ -35,13 +46,9 @@ if api_key:
                         model="llama-3.3-70b-versatile",
                         messages=[{"role": "user", "content": prompt}],
                     )
-                    
-                    # Display Results
                     st.success("Analysis Complete!")
                     st.markdown(completion.choices[0].message.content)
                 except Exception as e:
                     st.error(f"Error: {e}")
-        else:
-            st.warning("Please enter some text to scan.")
 else:
-    st.info("Side mein apni API key daalein shuru karne ke liye.")
+    st.info("Shuru karne ke liye side mein API key daalein.")
