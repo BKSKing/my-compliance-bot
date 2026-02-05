@@ -30,12 +30,15 @@ Enterprise – Audit & ERP integration
 # ---------------- FUNCTIONS ----------------
 def extract_json_safely(text):
     try:
-        start = text.find("{")
-        end = text.rfind("}") + 1
+        # AI kabhi-kabhi ```json ... ``` ke andar code deta hai, use saaf karte hain
+        clean_text = text.replace("```json", "").replace("```", "").strip()
+        start = clean_text.find("{")
+        end = clean_text.rfind("}") + 1
         if start == -1 or end == -1:
             return None
-        return json.loads(text[start:end])
-    except:
+        return json.loads(clean_text[start:end])
+    except Exception as e:
+        print(f"JSON Error: {e}")
         return None
 
 def extract_text_from_pdf(pdf_file):
@@ -45,7 +48,6 @@ def extract_text_from_pdf(pdf_file):
         if page.extract_text():
             text += page.extract_text()
     return text
-
 
 def generate_compliance_pdf(df, notice_draft):
     file_path = "Compliance_Audit_Report.pdf"
@@ -59,7 +61,6 @@ def generate_compliance_pdf(df, notice_draft):
     )
 
     elements = []
-
     elements.append(Paragraph("COMPLIANCE AUDIT REPORT", header_style))
     elements.append(Spacer(1, 12))
     elements.append(Paragraph("Issued by ComplianceBot AI", styles["Normal"]))
@@ -69,6 +70,7 @@ def generate_compliance_pdf(df, notice_draft):
     elements.append(Paragraph("<b>Identified Compliance Issues</b>", styles["Heading2"]))
     elements.append(Spacer(1, 10))
 
+    # Table formatting
     table_data = [df.columns.tolist()] + df.values.tolist()
     table = Table(table_data, repeatRows=1)
     elements.append(table)
@@ -80,7 +82,6 @@ def generate_compliance_pdf(df, notice_draft):
 
     doc.build(elements)
     return file_path
-
 
 # ---------------- MAIN ----------------
 if not api_key:
@@ -101,47 +102,28 @@ if uploaded_file:
         with st.spinner("Performing regulatory analysis..."):
 
             prompt = f"""
-You are a senior global compliance auditor working with tax authorities,
-customs departments, and regulatory bodies.
+            Analyze the following invoice strictly from a global regulatory perspective.
+            Identify ALL compliance violations across taxation, invoicing, trade, and statutory requirements.
 
-Analyze the following invoice strictly from a global regulatory perspective.
+            Return output strictly as a JSON object with this structure:
+            {{
+              "violations": [
+                {{
+                  "violation": "Short description",
+                  "law_reference": "Specific law section",
+                  "financial_exposure": "Monetary penalty amount",
+                  "liable_entity": "Who is responsible",
+                  "credit_or_deduction_impact": "Impact on tax credits",
+                  "risk_level": "LOW | MEDIUM | HIGH",
+                  "regulatory_notice_probability_percent": "e.g. 85%"
+                }}
+              ],
+              "notice_reply_draft": "Professional legal response draft..."
+            }}
 
-Identify ALL compliance violations across taxation, invoicing, trade,
-and statutory disclosure requirements.
-
-For EACH violation, return output strictly as a JSON ARRAY:
-
-[
-  {{
-    "violation": "",
-    "law_reference": "",
-    "financial_exposure": "",
-    "liable_entity": "",
-    "credit_or_deduction_impact": "",
-    "risk_level": "LOW | MEDIUM | HIGH",
-    "regulatory_notice_probability_percent": ""
-  }}
-]
-
-Then also generate a separate section called "NOTICE_REPLY_DRAFT"
-written in professional legal language, suitable for submission
-to a tax authority or regulatory body.
-
-Invoice Text:
-{invoice_text}
-
-Rules:
-- Use neutral global legal language
-- Mention law sections where applicable
-- Financial exposure must be monetary
-- Probability must be numeric %
-- Return STRICT JSON in this structure:
-
-{{
-  "violations": [...],
-  "notice_reply_draft": "..."
-}}
-"""
+            Invoice Text:
+            {invoice_text}
+            """
 
             try:
                 completion = client.chat.completions.create(
@@ -149,53 +131,46 @@ Rules:
                     messages=[{"role": "user", "content": prompt}],
                 )
 
-                result = json.loads(completion.choices[0].message.content)
+                raw_content = completion.choices[0].message.content
+                json_data = extract_json_safely(raw_content)
 
-                df = pd.DataFrame(result["violations"])
-                notice_draft = result["notice_reply_draft"]
+                if json_data and "violations" in json_data:
+                    df = pd.DataFrame(json_data["violations"])
+                    notice_draft = json_data.get("notice_reply_draft", "No draft generated.")
 
-                st.success("Compliance analysis completed.")
+                    st.success("Compliance analysis completed.")
 
-                st.subheader("Identified Compliance Violations")
-                st.dataframe(df, use_container_width=True)
+                    st.subheader("Identified Compliance Violations")
+                    st.dataframe(df, use_container_width=True)
 
-                avg_risk = (
-                    df["regulatory_notice_probability_percent"]
-                    .astype(str)
-                    .str.replace("%", "")
-                    .astype(float)
-                    .mean()
-                )
+                    # Risk Metric Calculation
+                    try:
+                        probs = df["regulatory_notice_probability_percent"].astype(str).str.replace("%", "")
+                        avg_risk = pd.to_numeric(probs, errors='coerce').fillna(0).mean()
+                        st.metric("Overall Regulatory Notice Probability", f"{round(avg_risk, 1)}%")
+                    except:
+                        st.metric("Overall Regulatory Notice Probability", "N/A")
 
-                st.metric(
-                    "Overall Regulatory Notice Probability",
-                    f"{round(avg_risk, 1)}%"
-                )
+                    st.subheader("Draft Regulatory Response")
+                    st.text_area("Auto-generated Notice Reply", notice_draft, height=250)
 
-                st.subheader("Draft Regulatory Response")
-                st.text_area(
-                    "Auto-generated Notice Reply",
-                    notice_draft,
-                    height=250
-                )
-
-                if st.button("Download Compliance Report (PDF)"):
-                    pdf = generate_compliance_pdf(df, notice_draft)
-                    with open(pdf, "rb") as f:
+                    # PDF Download Button
+                    pdf_file = generate_compliance_pdf(df, notice_draft)
+                    with open(pdf_file, "rb") as f:
                         st.download_button(
-                            "Download PDF",
-                            f,
+                            label="Download Compliance Report (PDF)",
+                            data=f,
                             file_name="Compliance_Audit_Report.pdf",
                             mime="application/pdf"
                         )
+                else:
+                    st.error("AI output was not in the correct format. Raw output shown below:")
+                    st.code(raw_content)
 
             except Exception as e:
-                st.error("Analysis failed.")
-                st.code(str(e))
+                st.error(f"Analysis failed: {e}")
 
 # ---------------- FOOTER ----------------
 st.markdown("---")
-st.markdown(
-    "**Disclaimer:** This software provides automated compliance insights and does not constitute legal advice."
-)
+st.markdown("**Disclaimer:** This software provides automated compliance insights and does not constitute legal advice.")
 
