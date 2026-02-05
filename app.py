@@ -28,6 +28,16 @@ Enterprise – Audit & ERP integration
 """)
 
 # ---------------- FUNCTIONS ----------------
+def extract_json_safely(text):
+    try:
+        start = text.find("{")
+        end = text.rfind("}") + 1
+        if start == -1 or end == -1:
+            return None
+        return json.loads(text[start:end])
+    except:
+        return None
+
 def extract_text_from_pdf(pdf_file):
     reader = PdfReader(pdf_file)
     text = ""
