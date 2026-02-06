@@ -22,38 +22,41 @@ st.set_page_config(
     layout="wide"
 )
 
-# 🔐 LOGIN / SIGNUP BLOCK
-# Isse PDF upload aur baaki app lock ho jayega
+# 🔐 LOGIN / SIGNUP BLOCK (FIXED SAFE VERSION)
 if not st.session_state.user:
     st.title("🛡️ ComplianceBot AI")
-    st.subheader("Login / Signup to access the Audit Suite")
+    st.subheader("Login / Signup")
 
-    email = st.text_input("Email")
-    password = st.text_input("Password", type="password")
+    email = st.text_input("Email", key="email")
+    password = st.text_input("Password (min 6 chars)", type="password", key="password")
 
     col1, col2 = st.columns(2)
 
     if col1.button("Login"):
         res = login(email, password)
-        # Assuming 'res' has a user object (adjust based on your auth.py)
-        if res and hasattr(res, 'user') and res.user:
+        if isinstance(res, dict) and "error" in res:
+            st.error(res["error"])
+        elif res and hasattr(res, 'user') and res.user:
             st.session_state.user = res.user
+            st.success("Login successful")
             st.rerun()
         else:
-            st.error("Login failed. Please check credentials.")
+            st.error("Invalid login credentials")
 
     if col2.button("Signup"):
         res = signup(email, password)
-        if res and hasattr(res, 'user') and res.user:
+        if isinstance(res, dict) and "error" in res:
+            st.error(res["error"])
+        elif res and hasattr(res, 'user') and res.user:
+            # Database mein user entry create karte hain
             create_user(res.user.id, email)
             st.success("Signup successful. Please login.")
         else:
-            st.error("Signup failed.")
+            st.error("Signup failed")
 
     st.stop()
 
-# 🚦 PLAN + USAGE LIMIT LOGIC (FREE vs PAID)
-# Login hone ke baad user ka data fetch karte hain
+# 🚦 PLAN + USAGE LIMIT LOGIC
 user_email = st.session_state.user.email
 user_data = get_user(user_email)
 
@@ -80,7 +83,6 @@ if st.sidebar.button("Logout"):
 st.title("🛡️ ComplianceBot AI")
 st.subheader("Global Invoice & Regulatory Compliance Scanner")
 
-# Client Initialized with Hidden Key
 client = Groq(api_key=os.getenv("GROQ_API_KEY"))
 
 # ---------------- FUNCTIONS ----------------
@@ -133,7 +135,7 @@ if uploaded_file:
     if st.button("Analyze Compliance"):
         with st.spinner("Performing regulatory analysis..."):
             
-            # PROMPT (Unchanged)
+            # PROMPT (Unchanged as requested)
             prompt = f"""
             Analyze the following invoice strictly from a global regulatory perspective.
             Identify ALL compliance violations across taxation, invoicing, trade, and statutory requirements.
@@ -155,7 +157,7 @@ if uploaded_file:
             }}
 
             Invoice Text:
-            {invoice_text}
+            {{invoice_text}}
             """
 
             try:
@@ -168,7 +170,7 @@ if uploaded_file:
                 json_data = extract_json_safely(raw_content)
 
                 if json_data and "violations" in json_data:
-                    # ✅ Increment scan count in database
+                    # ✅ Database update
                     increment_scan(user_email)
                     
                     df = pd.DataFrame(json_data["violations"])
@@ -178,11 +180,10 @@ if uploaded_file:
                     st.subheader("Identified Compliance Violations")
                     st.dataframe(df, use_container_width=True)
 
-                    # Risk Metric
                     try:
                         probs = df["regulatory_notice_probability_percent"].astype(str).str.replace("%", "")
                         avg_risk = pd.to_numeric(probs, errors='coerce').fillna(0).mean()
-                        st.metric("Overall Risk Probability", f"{round(avg_risk, 1)}%")
+                        st.metric("Overall Risk Probability", f"{{round(avg_risk, 1)}}%")
                     except:
                         st.metric("Overall Risk Probability", "N/A")
 
@@ -195,7 +196,7 @@ if uploaded_file:
                 else:
                     st.error("AI output error. Please try again.")
             except Exception as e:
-                st.error(f"Analysis failed: {e}")
+                st.error(f"Analysis failed: {{e}}")
 
 st.markdown("---")
 st.markdown("**Disclaimer:** Automated insights only. Not legal advice.")
