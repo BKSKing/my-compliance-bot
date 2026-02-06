@@ -1,12 +1,20 @@
 import streamlit as st
 import json
 import pandas as pd
-import os  # <--- Added
+import os
 from groq import Groq
 from PyPDF2 import PdfReader
 from reportlab.platypus import SimpleDocTemplate, Paragraph, Table, Spacer
 from reportlab.lib.styles import getSampleStyleSheet, ParagraphStyle
 from reportlab.lib.enums import TA_CENTER
+
+# --- AUTH & DB IMPORTS ---
+# Ensure these files (auth.py, db.py) exist in your project
+try:
+    from auth import signup, login
+    from db import get_user, create_user, increment_scan
+except ImportError:
+    st.error("❌ Auth or DB modules missing! Make sure auth.py and db.py are in your folder.")
 
 # ---------------- PAGE SETUP ----------------
 st.set_page_config(
@@ -15,19 +23,47 @@ st.set_page_config(
     layout="wide"
 )
 
+# ---------------- SESSION STATE ----------------
+# User session initialization
+if "user" not in st.session_state:
+    st.session_state.user = None
+
+# ---------------- LOGIN / SIGNUP LOGIC ----------------
+if st.session_state.user is None:
+    st.title("🛡️ ComplianceBot AI")
+    st.subheader("Please Login or Signup to continue")
+    
+    tab1, tab2 = st.tabs(["Login", "Signup"])
+    
+    with tab1:
+        login_data = login() # This function should handle UI and return user data
+        if login_data:
+            st.session_state.user = login_data
+            st.rerun()
+            
+    with tab2:
+        signup_data = signup() # This function should handle UI
+        
+    st.stop() # Stop execution until user is logged in
+
+# ---------------- LOGGED IN APP ----------------
 st.title("🛡️ ComplianceBot AI")
-st.subheader("Global Invoice & Regulatory Compliance Scanner")
+st.subheader(f"Welcome, {st.session_state.user['username']} | Global Invoice Scanner")
+
+# Logout button in sidebar
+if st.sidebar.button("Logout"):
+    st.session_state.user = None
+    st.rerun()
 
 # ---------------- CLIENT INITIALIZATION ----------------
-# Sidebar se key wala part hata diya, ab seedha os.getenv use hoga
 client = Groq(api_key=os.getenv("GROQ_API_KEY"))
 
 # ---------------- SIDEBAR ----------------
 st.sidebar.markdown("### Plans")
 st.sidebar.markdown("""
-Free – Limited scans   
-Professional – Compliance reports   
-Enterprise – Audit & ERP integration   
+Free – Limited scans    
+Professional – Compliance reports    
+Enterprise – Audit & ERP integration    
 """)
 
 # ---------------- FUNCTIONS ----------------
@@ -85,7 +121,6 @@ def generate_compliance_pdf(df, notice_draft):
     return file_path
 
 # ---------------- MAIN ----------------
-# API Key check from Environment Variable
 if not os.getenv("GROQ_API_KEY"):
     st.error("❌ API Key Not Found! Please set 'GROQ_API_KEY' in your environment variables.")
     st.stop()
@@ -101,6 +136,7 @@ if uploaded_file:
     if st.button("Analyze Compliance"):
         with st.spinner("Performing regulatory analysis..."):
             
+            # PROMPT (Unchanged as requested)
             prompt = f"""
             Analyze the following invoice strictly from a global regulatory perspective.
             Identify ALL compliance violations across taxation, invoicing, trade, and statutory requirements.
@@ -135,6 +171,9 @@ if uploaded_file:
                 json_data = extract_json_safely(raw_content)
 
                 if json_data and "violations" in json_data:
+                    # Update scan count in DB
+                    increment_scan(st.session_state.user['username'])
+                    
                     df = pd.DataFrame(json_data["violations"])
                     notice_draft = json_data.get("notice_reply_draft", "No draft generated.")
 
