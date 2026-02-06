@@ -4,6 +4,8 @@ groq
 
 pypdf2
 
+supabase
+
 pandas
 
 reportlab
