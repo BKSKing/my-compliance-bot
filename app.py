@@ -8,13 +8,12 @@ from reportlab.platypus import SimpleDocTemplate, Paragraph, Table, Spacer
 from reportlab.lib.styles import getSampleStyleSheet, ParagraphStyle
 from reportlab.lib.enums import TA_CENTER
 
-# --- AUTH & DB IMPORTS ---
-# Ensure these files (auth.py, db.py) exist in your project
-try:
-    from auth import signup, login
-    from db import get_user, create_user, increment_scan
-except ImportError:
-    st.error("❌ Auth or DB modules missing! Make sure auth.py and db.py are in your folder.")
+# 🔹 TOP of app.py: IMPORTS & SESSION STATE
+from auth import signup, login
+from db import get_user, create_user, increment_scan
+
+if "user" not in st.session_state:
+    st.session_state.user = None
 
 # ---------------- PAGE SETUP ----------------
 st.set_page_config(
@@ -23,48 +22,66 @@ st.set_page_config(
     layout="wide"
 )
 
-# ---------------- SESSION STATE ----------------
-# User session initialization
-if "user" not in st.session_state:
-    st.session_state.user = None
-
-# ---------------- LOGIN / SIGNUP LOGIC ----------------
-if st.session_state.user is None:
+# 🔐 LOGIN / SIGNUP BLOCK
+# Isse PDF upload aur baaki app lock ho jayega
+if not st.session_state.user:
     st.title("🛡️ ComplianceBot AI")
-    st.subheader("Please Login or Signup to continue")
-    
-    tab1, tab2 = st.tabs(["Login", "Signup"])
-    
-    with tab1:
-        login_data = login() # This function should handle UI and return user data
-        if login_data:
-            st.session_state.user = login_data
+    st.subheader("Login / Signup to access the Audit Suite")
+
+    email = st.text_input("Email")
+    password = st.text_input("Password", type="password")
+
+    col1, col2 = st.columns(2)
+
+    if col1.button("Login"):
+        res = login(email, password)
+        # Assuming 'res' has a user object (adjust based on your auth.py)
+        if res and hasattr(res, 'user') and res.user:
+            st.session_state.user = res.user
             st.rerun()
-            
-    with tab2:
-        signup_data = signup() # This function should handle UI
-        
-    st.stop() # Stop execution until user is logged in
+        else:
+            st.error("Login failed. Please check credentials.")
 
-# ---------------- LOGGED IN APP ----------------
-st.title("🛡️ ComplianceBot AI")
-st.subheader(f"Welcome, {st.session_state.user['username']} | Global Invoice Scanner")
+    if col2.button("Signup"):
+        res = signup(email, password)
+        if res and hasattr(res, 'user') and res.user:
+            create_user(res.user.id, email)
+            st.success("Signup successful. Please login.")
+        else:
+            st.error("Signup failed.")
 
-# Logout button in sidebar
+    st.stop()
+
+# 🚦 PLAN + USAGE LIMIT LOGIC (FREE vs PAID)
+# Login hone ke baad user ka data fetch karte hain
+user_email = st.session_state.user.email
+user_data = get_user(user_email)
+
+plan = user_data.get("plan", "free")
+scans_used = user_data.get("scans_used", 0)
+
+# Sidebar for Status
+st.sidebar.title("💎 Membership")
+st.sidebar.write(f"User: {user_email}")
+st.sidebar.write(f"Plan: {plan.upper()}")
+st.sidebar.write(f"Scans Used: {scans_used}")
+
+if plan == "free" and scans_used >= 3:
+    st.error("🚨 Free plan limit reached (3 scans). Please upgrade to Professional to continue.")
+    st.sidebar.markdown("---")
+    st.sidebar.button("🚀 Upgrade to Pro (₹999)")
+    st.stop()
+
 if st.sidebar.button("Logout"):
     st.session_state.user = None
     st.rerun()
 
-# ---------------- CLIENT INITIALIZATION ----------------
-client = Groq(api_key=os.getenv("GROQ_API_KEY"))
+# ---------------- APP LOGIC START ----------------
+st.title("🛡️ ComplianceBot AI")
+st.subheader("Global Invoice & Regulatory Compliance Scanner")
 
-# ---------------- SIDEBAR ----------------
-st.sidebar.markdown("### Plans")
-st.sidebar.markdown("""
-Free – Limited scans    
-Professional – Compliance reports    
-Enterprise – Audit & ERP integration    
-""")
+# Client Initialized with Hidden Key
+client = Groq(api_key=os.getenv("GROQ_API_KEY"))
 
 # ---------------- FUNCTIONS ----------------
 def extract_json_safely(text):
@@ -72,71 +89,51 @@ def extract_json_safely(text):
         clean_text = text.replace("```json", "").replace("```", "").strip()
         start = clean_text.find("{")
         end = clean_text.rfind("}") + 1
-        if start == -1 or end == -1:
-            return None
+        if start == -1 or end == -1: return None
         return json.loads(clean_text[start:end])
-    except Exception as e:
-        print(f"JSON Error: {e}")
+    except:
         return None
 
 def extract_text_from_pdf(pdf_file):
     reader = PdfReader(pdf_file)
     text = ""
     for page in reader.pages:
-        if page.extract_text():
-            text += page.extract_text()
+        if page.extract_text(): text += page.extract_text()
     return text
 
 def generate_compliance_pdf(df, notice_draft):
     file_path = "Compliance_Audit_Report.pdf"
     doc = SimpleDocTemplate(file_path)
     styles = getSampleStyleSheet()
-    
-    header_style = ParagraphStyle(
-        "Header",
-        parent=styles["Title"],
-        alignment=TA_CENTER
-    )
+    header_style = ParagraphStyle("Header", parent=styles["Title"], alignment=TA_CENTER)
     
     elements = []
     elements.append(Paragraph("COMPLIANCE AUDIT REPORT", header_style))
-    elements.append(Spacer(1, 12))
-    elements.append(Paragraph("Issued by ComplianceBot AI", styles["Normal"]))
-    elements.append(Paragraph("Automated Regulatory Risk Assessment", styles["Italic"]))
     elements.append(Spacer(1, 20))
-    
     elements.append(Paragraph("<b>Identified Compliance Issues</b>", styles["Heading2"]))
-    elements.append(Spacer(1, 10))
     
     table_data = [df.columns.tolist()] + df.values.tolist()
-    table = Table(table_data, repeatRows=1)
-    elements.append(table)
+    elements.append(Table(table_data, repeatRows=1))
     
     elements.append(Spacer(1, 20))
-    elements.append(Paragraph("<b>Draft Response to Regulatory Authority</b>", styles["Heading2"]))
-    elements.append(Spacer(1, 10))
+    elements.append(Paragraph("<b>Draft Response</b>", styles["Heading2"]))
     elements.append(Paragraph(notice_draft.replace("\n", "<br/>"), styles["Normal"]))
     
     doc.build(elements)
     return file_path
 
 # ---------------- MAIN ----------------
-if not os.getenv("GROQ_API_KEY"):
-    st.error("❌ API Key Not Found! Please set 'GROQ_API_KEY' in your environment variables.")
-    st.stop()
-
 uploaded_file = st.file_uploader("Upload Invoice (PDF)", type="pdf")
 
 if uploaded_file:
-    with st.spinner("Extracting text from document..."):
+    with st.spinner("Extracting text..."):
         invoice_text = extract_text_from_pdf(uploaded_file)
-    
     st.success("Document processed successfully.")
 
     if st.button("Analyze Compliance"):
         with st.spinner("Performing regulatory analysis..."):
             
-            # PROMPT (Unchanged as requested)
+            # PROMPT (Unchanged)
             prompt = f"""
             Analyze the following invoice strictly from a global regulatory perspective.
             Identify ALL compliance violations across taxation, invoicing, trade, and statutory requirements.
@@ -171,45 +168,37 @@ if uploaded_file:
                 json_data = extract_json_safely(raw_content)
 
                 if json_data and "violations" in json_data:
-                    # Update scan count in DB
-                    increment_scan(st.session_state.user['username'])
+                    # ✅ Increment scan count in database
+                    increment_scan(user_email)
                     
                     df = pd.DataFrame(json_data["violations"])
                     notice_draft = json_data.get("notice_reply_draft", "No draft generated.")
 
-                    st.success("Compliance analysis completed.")
-                    
+                    st.success("Analysis Complete!")
                     st.subheader("Identified Compliance Violations")
                     st.dataframe(df, use_container_width=True)
 
+                    # Risk Metric
                     try:
                         probs = df["regulatory_notice_probability_percent"].astype(str).str.replace("%", "")
                         avg_risk = pd.to_numeric(probs, errors='coerce').fillna(0).mean()
-                        st.metric("Overall Regulatory Notice Probability", f"{round(avg_risk, 1)}%")
+                        st.metric("Overall Risk Probability", f"{round(avg_risk, 1)}%")
                     except:
-                        st.metric("Overall Regulatory Notice Probability", "N/A")
+                        st.metric("Overall Risk Probability", "N/A")
 
                     st.subheader("Draft Regulatory Response")
-                    st.text_area("Auto-generated Notice Reply", notice_draft, height=250)
+                    st.text_area("Legal Response Draft", notice_draft, height=250)
 
                     pdf_file = generate_compliance_pdf(df, notice_draft)
                     with open(pdf_file, "rb") as f:
-                        st.download_button(
-                            label="Download Compliance Report (PDF)",
-                            data=f,
-                            file_name="Compliance_Audit_Report.pdf",
-                            mime="application/pdf"
-                        )
+                        st.download_button("Download PDF Report", f, "Audit_Report.pdf", "application/pdf")
                 else:
-                    st.error("AI output was not in the correct format. Raw output shown below:")
-                    st.code(raw_content)
-
+                    st.error("AI output error. Please try again.")
             except Exception as e:
                 st.error(f"Analysis failed: {e}")
 
-# ---------------- FOOTER ----------------
 st.markdown("---")
-st.markdown("**Disclaimer:** This software provides automated compliance insights and does not constitute legal advice.")
+st.markdown("**Disclaimer:** Automated insights only. Not legal advice.")
 
 
 
