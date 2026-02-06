@@ -7,13 +7,23 @@ supabase = create_client(
 )
 
 def signup(email, password):
+    if not email or not password:
+        return {"error": "Email and password required"}
+
+    if len(password) < 6:
+        return {"error": "Password must be at least 6 characters"}
+
     return supabase.auth.sign_up({
-        "email": email,
+        "email": email.strip(),
         "password": password
     })
 
 def login(email, password):
+    if not email or not password:
+        return {"error": "Email and password required"}
+
     return supabase.auth.sign_in_with_password({
-        "email": email,
+        "email": email.strip(),
         "password": password
     })
+
