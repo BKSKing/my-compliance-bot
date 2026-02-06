@@ -7,170 +7,129 @@ from reportlab.platypus import SimpleDocTemplate, Paragraph, Table, Spacer
 from reportlab.lib.styles import getSampleStyleSheet, ParagraphStyle
 from reportlab.lib.enums import TA_CENTER
 
-# ---------------- PAGE SETUP ----------------
-st.set_page_config(
-    page_title="ComplianceBot AI",
-    page_icon="🛡️",
-    layout="wide"
-)
+# 1. PAGE SETUP & PROFESSIONAL DESIGN
+st.set_page_config(page_title="ComplianceBot AI", page_icon="🛡️", layout="wide")
 
-st.title("🛡️ ComplianceBot AI")
-st.subheader("Global Invoice & Regulatory Compliance Scanner")
+st.markdown("""
+    <style>
+    .stButton>button {
+        width: 100%;
+        border-radius: 10px;
+        height: 3em;
+        background-color: #2e76ff;
+        color: white;
+        font-weight: bold;
+        border: none;
+    }
+    .stButton>button:hover { background-color: #1a56cc; }
+    div[data-testid="stMetricValue"] { color: #2e76ff; }
+    </style>
+    """, unsafe_allow_html=True)
 
-# ---------------- SIDEBAR ----------------
-api_key = st.sidebar.text_input("API Key", type="password")
+# 2. SESSION STATE
+if 'logged_in' not in st.session_state:
+    st.session_state.logged_in = False
+if 'usage_count' not in st.session_state:
+    st.session_state.usage_count = 0
 
-st.sidebar.markdown("### Plans")
-st.sidebar.markdown("""
-Free – Limited scans  
-Professional – Compliance reports  
-Enterprise – Audit & ERP integration  
-""")
-
-# ---------------- FUNCTIONS ----------------
+# 3. HELPER FUNCTIONS
 def extract_json_safely(text):
     try:
-        # AI kabhi-kabhi ```json ... ``` ke andar code deta hai, use saaf karte hain
         clean_text = text.replace("```json", "").replace("```", "").strip()
         start = clean_text.find("{")
         end = clean_text.rfind("}") + 1
-        if start == -1 or end == -1:
-            return None
-        return json.loads(clean_text[start:end])
-    except Exception as e:
-        print(f"JSON Error: {e}")
+        return json.loads(clean_text[start:end]) if start != -1 else None
+    except:
         return None
 
 def extract_text_from_pdf(pdf_file):
     reader = PdfReader(pdf_file)
-    text = ""
-    for page in reader.pages:
-        if page.extract_text():
-            text += page.extract_text()
-    return text
+    return "".join([page.extract_text() for page in reader.pages if page.extract_text()])
 
 def generate_compliance_pdf(df, notice_draft):
     file_path = "Compliance_Audit_Report.pdf"
     doc = SimpleDocTemplate(file_path)
     styles = getSampleStyleSheet()
-
-    header_style = ParagraphStyle(
-        "Header",
-        parent=styles["Title"],
-        alignment=TA_CENTER
-    )
-
-    elements = []
-    elements.append(Paragraph("COMPLIANCE AUDIT REPORT", header_style))
-    elements.append(Spacer(1, 12))
-    elements.append(Paragraph("Issued by ComplianceBot AI", styles["Normal"]))
-    elements.append(Paragraph("Automated Regulatory Risk Assessment", styles["Italic"]))
-    elements.append(Spacer(1, 20))
-
-    elements.append(Paragraph("<b>Identified Compliance Issues</b>", styles["Heading2"]))
-    elements.append(Spacer(1, 10))
-
-    # Table formatting
-    table_data = [df.columns.tolist()] + df.values.tolist()
-    table = Table(table_data, repeatRows=1)
-    elements.append(table)
-
-    elements.append(Spacer(1, 20))
-    elements.append(Paragraph("<b>Draft Response to Regulatory Authority</b>", styles["Heading2"]))
-    elements.append(Spacer(1, 10))
-    elements.append(Paragraph(notice_draft.replace("\n", "<br/>"), styles["Normal"]))
-
+    header_style = ParagraphStyle("Header", parent=styles["Title"], alignment=TA_CENTER)
+    
+    elements = [
+        Paragraph("COMPLIANCE AUDIT REPORT", header_style),
+        Spacer(1, 12),
+        Paragraph("<b>Identified Compliance Issues</b>", styles["Heading2"]),
+        Spacer(1, 10),
+        Table([df.columns.tolist()] + df.values.tolist(), repeatRows=1),
+        Spacer(1, 20),
+        Paragraph("<b>Draft Response</b>", styles["Heading2"]),
+        Paragraph(notice_draft.replace("\n", "<br/>"), styles["Normal"])
+    ]
     doc.build(elements)
     return file_path
 
-# ---------------- MAIN ----------------
-if not api_key:
-    st.info("Please enter your API key to begin.")
-    st.stop()
+# 4. LOGIN PAGE
+def show_login():
+    st.title("🛡️ ComplianceBot Pro")
+    st.subheader("Sign in to your Enterprise Account")
+    with st.form("Login"):
+        u = st.text_input("Username / Email")
+        p = st.text_input("Password", type="password")
+        if st.form_submit_button("Login"):
+            if u == "admin" and p == "100million":
+                st.session_state.logged_in = True
+                st.rerun()
+            else:
+                st.error("Invalid Credentials")
 
-client = Groq(api_key=api_key)
+# 5. MAIN APP LOGIC
+def show_main():
+    # API Key from Secrets
+    try:
+        api_key = st.secrets["GROQ_API_KEY"]
+        client = Groq(api_key=api_key)
+    except:
+        st.error("Backend Error: [GROQ_API_KEY] missing in [Streamlit Secrets](https://docs.streamlit.io)!")
+        return
 
-uploaded_file = st.file_uploader("Upload Invoice (PDF)", type="pdf")
+    st.sidebar.title("💎 Membership: PRO")
+    st.sidebar.write(f"Scans Used: {st.session_state.usage_count} / 2")
 
-if uploaded_file:
-    with st.spinner("Extracting text from document..."):
-        invoice_text = extract_text_from_pdf(uploaded_file)
+    if st.session_state.usage_count >= 2:
+        st.sidebar.warning("🚨 FREE LIMIT REACHED")
+        st.sidebar.markdown('<a href="https://rzp.io/l/your_link" target="_blank"><button style="width:100%; border-radius:10px; background-color:#ff4b4b; color:white; padding:10px; border:none; cursor:pointer;">UPGRADE TO UNLIMITED</button></a>', unsafe_allow_html=True)
+    
+    st.title("🛡️ ComplianceBot Audit Suite")
+    uploaded_file = st.file_uploader("Upload Invoice PDF", type="pdf")
 
-    st.success("Document processed successfully.")
-
-    if st.button("Analyze Compliance"):
-        with st.spinner("Performing regulatory analysis..."):
-
-            prompt = f"""
-            Analyze the following invoice strictly from a global regulatory perspective.
-            Identify ALL compliance violations across taxation, invoicing, trade, and statutory requirements.
-
-            Return output strictly as a JSON object with this structure:
-            {{
-              "violations": [
-                {{
-                  "violation": "Short description",
-                  "law_reference": "Specific law section",
-                  "financial_exposure": "Monetary penalty amount",
-                  "liable_entity": "Who is responsible",
-                  "credit_or_deduction_impact": "Impact on tax credits",
-                  "risk_level": "LOW | MEDIUM | HIGH",
-                  "regulatory_notice_probability_percent": "e.g. 85%"
-                }}
-              ],
-              "notice_reply_draft": "Professional legal response draft..."
-            }}
-
-            Invoice Text:
-            {invoice_text}
-            """
-
-            try:
+    if uploaded_file and st.session_state.usage_count < 2:
+        if st.button("Start Deep Audit"):
+            st.session_state.usage_count += 1
+            invoice_text = extract_text_from_pdf(uploaded_file)
+            
+            with st.spinner("AI Auditor is checking 500+ global regulations..."):
+                prompt = f"Analyze this invoice for compliance violations. Return ONLY JSON with 'violations' list and 'notice_reply_draft'. Invoice: {invoice_text}"
+                
                 completion = client.chat.completions.create(
                     model="llama-3.3-70b-versatile",
-                    messages=[{"role": "user", "content": prompt}],
+                    messages=[{"role": "user", "content": prompt}]
                 )
-
-                raw_content = completion.choices[0].message.content
-                json_data = extract_json_safely(raw_content)
-
-                if json_data and "violations" in json_data:
+                
+                json_data = extract_json_safely(completion.choices[0].message.content)
+                
+                if json_data:
                     df = pd.DataFrame(json_data["violations"])
-                    notice_draft = json_data.get("notice_reply_draft", "No draft generated.")
-
-                    st.success("Compliance analysis completed.")
-
-                    st.subheader("Identified Compliance Violations")
+                    st.success("Audit Complete.")
                     st.dataframe(df, use_container_width=True)
-
-                    # Risk Metric Calculation
-                    try:
-                        probs = df["regulatory_notice_probability_percent"].astype(str).str.replace("%", "")
-                        avg_risk = pd.to_numeric(probs, errors='coerce').fillna(0).mean()
-                        st.metric("Overall Regulatory Notice Probability", f"{round(avg_risk, 1)}%")
-                    except:
-                        st.metric("Overall Regulatory Notice Probability", "N/A")
-
-                    st.subheader("Draft Regulatory Response")
-                    st.text_area("Auto-generated Notice Reply", notice_draft, height=250)
-
-                    # PDF Download Button
-                    pdf_file = generate_compliance_pdf(df, notice_draft)
-                    with open(pdf_file, "rb") as f:
-                        st.download_button(
-                            label="Download Compliance Report (PDF)",
-                            data=f,
-                            file_name="Compliance_Audit_Report.pdf",
-                            mime="application/pdf"
-                        )
+                    
+                    # Generate PDF
+                    pdf_path = generate_compliance_pdf(df, json_data.get("notice_reply_draft", ""))
+                    with open(pdf_path, "rb") as f:
+                        st.download_button("Download Full Audit Report", f, file_name="Audit_Report.pdf")
                 else:
-                    st.error("AI output was not in the correct format. Raw output shown below:")
-                    st.code(raw_content)
+                    st.error("Analysis failed to format correctly.")
 
-            except Exception as e:
-                st.error(f"Analysis failed: {e}")
+# RUN
+if st.session_state.logged_in:
+    show_main()
+else:
+    show_login()
 
-# ---------------- FOOTER ----------------
-st.markdown("---")
-st.markdown("**Disclaimer:** This software provides automated compliance insights and does not constitute legal advice.")
 
