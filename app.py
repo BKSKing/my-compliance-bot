@@ -78,7 +78,10 @@ user_data_resp = supabase.table("users").select("*").eq(
 user_data = user_data_resp.data
 plan = user_data.get("plan", "free")
 scans_used = user_data.get("scans_used", 0)
-user_country = user_data.get("country", "India")
+
+# 🛠️ FIXED COUNTRY & PRICING LOGIC
+user_country = user_data.get("country") or "IN"
+pricing = get_pricing(user_country)
 
 # Sidebar for Status
 st.sidebar.title("💎 Membership")
@@ -94,7 +97,6 @@ if st.sidebar.button("Logout"):
 if plan != "pro":
     st.warning("⚠️ Upgrade to Pro to unlock full features.")
     
-    pricing = get_pricing(user_country)
     st.subheader("Pro Subscription Details")
     st.markdown(f"""
     - **Price:** {pricing['currency']}{pricing['price']} / month
