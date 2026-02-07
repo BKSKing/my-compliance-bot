@@ -11,6 +11,7 @@ from reportlab.lib.enums import TA_CENTER
 # 🔹 TOP of app.py: IMPORTS & SESSION STATE
 from auth import signup, login
 from db import get_user, create_user, increment_scan
+from pricing import get_pricing  # <--- Added Import
 
 if "user" not in st.session_state:
     st.session_state.user = None
@@ -69,10 +70,33 @@ st.sidebar.write(f"User: {user_email}")
 st.sidebar.write(f"Plan: {plan.upper()}")
 st.sidebar.write(f"Scans Used: {scans_used}")
 
+# --- DYNAMIC PRICING & LIMIT BLOCK ---
 if plan == "free" and scans_used >= 3:
     st.error("🚨 Free plan limit reached (3 scans). Please upgrade to Professional to continue.")
-    st.sidebar.markdown("---")
-    st.sidebar.button("🚀 Upgrade to Pro (₹999)")
+    
+    # Pricing Section
+    st.subheader("Your Subscription Plan")
+    country = st.selectbox(
+        "Select your country",
+        ["India", "USA", "UK", "Germany", "Nigeria", "Other"]
+    )
+    pricing = get_pricing(country)
+
+    st.markdown(
+        f"""
+        ### Pro Plan
+        **Price:** {pricing['currency']}{pricing['price']} / month  
+        **Includes:**
+        - Unlimited invoice scans
+        - Compliance risk detection
+        - PDF audit reports
+        - Notice reply drafts
+        """
+    )
+    
+    if st.button(f"🚀 Upgrade to Pro ({pricing['currency']}{pricing['price']})"):
+        st.info("Redirecting to payment gateway...")
+    
     st.stop()
 
 if st.sidebar.button("Logout"):
@@ -136,7 +160,7 @@ if uploaded_file:
     if st.button("Analyze Compliance"):
         with st.spinner("Performing regulatory analysis..."):
             
-            # --- NEW SENIOR AUDITOR PROMPT INTEGRATED ---
+            # --- SENIOR AUDITOR PROMPT ---
             prompt = f"""
             You are a senior global compliance auditor with experience in taxation, invoicing regulations, and trade laws across multiple jurisdictions.
 
@@ -206,7 +230,6 @@ if uploaded_file:
                 if json_data:
                     increment_scan(user_email)
                     
-                    # UI display for Context
                     ctx = json_data.get("invoice_context", {})
                     st.info(f"📍 **Context Detected:** {ctx.get('transaction_type')} | Seller: {ctx.get('seller_country')} | Currency: {ctx.get('currency')}")
                     
@@ -218,7 +241,6 @@ if uploaded_file:
                         st.subheader("Identified Compliance Violations")
                         st.dataframe(df, use_container_width=True)
 
-                        # Risk Metric
                         try:
                             probs = df["regulatory_notice_probability_percent"].astype(str).str.replace("%", "")
                             avg_risk = pd.to_numeric(probs, errors='coerce').fillna(0).mean()
