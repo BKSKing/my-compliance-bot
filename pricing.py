@@ -2,18 +2,21 @@ def get_pricing(country):
     country = country.lower()
 
     if country == "india":
-        return {"currency": "₹", "price": 1299}
-
-    if country in ["nigeria", "kenya", "ghana", "south africa"]:
-        return {"currency": "$", "price": 9}
-
-    if country in ["indonesia", "vietnam", "philippines", "thailand"]:
-        return {"currency": "$", "price": 12}
+        return {
+            "currency": "₹",
+            "price": 1299,
+            "provider": "razorpay"
+        }
 
     if country in ["germany", "france", "italy", "spain", "uk"]:
-        return {"currency": "€", "price": 39}
+        return {
+            "currency": "€",
+            "price": 39,
+            "provider": "stripe"
+        }
 
-    if country in ["united states", "usa", "canada"]:
-        return {"currency": "$", "price": 59}
-
-    return {"currency": "$", "price": 59}  # default
+    return {
+        "currency": "$",
+        "price": 59,
+        "provider": "stripe"
+    }
