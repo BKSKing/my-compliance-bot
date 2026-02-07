@@ -22,8 +22,13 @@ def login(email, password):
     if not email or not password:
         return {"error": "Email and password required"}
 
-    return supabase.auth.sign_in_with_password({
-        "email": email.strip(),
-        "password": password
-    })
+    try:
+        res = supabase.auth.sign_in_with_password({
+            "email": email.strip(),
+            "password": password
+        })
+        return res
+    except Exception as e:
+        return {"error": str(e)}
+
 
