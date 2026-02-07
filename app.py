@@ -156,6 +156,7 @@ if uploaded_file:
             elif pricing["provider"] == "razorpay":
                 if st.button("🚀 Upgrade via Razorpay"):
                     st.session_state.open_razorpay = True
+                
                 if st.session_state.open_razorpay:
                     order = create_razorpay_order(pricing["price"], st.session_state.user.email)
                     razorpay_html = f"""
@@ -184,7 +185,7 @@ if uploaded_file:
             st.stop()
 
         with st.spinner("Senior Auditor is reviewing your invoice..."):
-            # PROMPT (Untouched)
+            # PROMPT (Untouched as requested)
             prompt = f"""
             You are a senior global compliance auditor specialized in VAT, GST, and international trade laws.
             Analyze the invoice text below and identify strict compliance violations.
@@ -232,37 +233,50 @@ if uploaded_file:
                 }).execute()
                 
                 increment_scan(st.session_state.user.email)
+                
+                # Show results UI
+                ctx = json_data.get("invoice_context", {})
+                st.info(f"📍 Context: {ctx.get('transaction_type')} | {ctx.get('seller_country')} -> {ctx.get('buyer_country')}")
+                if json_data.get("violations"):
+                    df = pd.DataFrame(json_data["violations"])
+                    st.subheader("⚠️ Compliance Violations Detected")
+                    st.dataframe(df, use_container_width=True)
+                else:
+                    st.success("✅ No violations found!")
+                
                 st.rerun()
 
 # --- 📜 SCAN HISTORY SECTION (ENHANCED) ---
 st.markdown("---")
-st.subheader("📜 Your Scan History")
+col_title, col_del = st.columns([4, 1])
+with col_title:
+    st.subheader("📜 Your Scan History")
 
 history_resp = supabase.table("scans").select("*").eq(
     "user_email", st.session_state.user.email
 ).order("created_at", desc=True).limit(10).execute()
 
 if history_resp.data:
+    with col_del:
+        if st.button("🗑️ Clear All"):
+            supabase.table("scans").delete().eq("user_email", st.session_state.user.email).execute()
+            st.success("History deleted!")
+            st.rerun()
+
     for scan in history_resp.data:
-        # Date cleaning
-        date_str = scan['created_at'][:10] # YYYY-MM-DD
+        date_str = scan['created_at'][:10]
         risk_icon = "🔴" if scan['risk_score'] == "High" else "🟢"
-        
         with st.expander(f"📅 {date_str} | {scan['transaction_type']} | {risk_icon} Risk: {scan['risk_score']}"):
-            col1, col2, col3 = st.columns(3)
-            with col1:
-                st.metric("Violations", scan['violation_count'])
-            with col2:
-                st.write(f"**Jurisdiction:** {scan['transaction_type']}")
-            with col3:
-                st.write(f"**Status:** Analysis Saved")
-            
+            c1, c2, c3 = st.columns(3)
+            c1.metric("Violations", scan['violation_count'])
+            c2.write(f"**Jurisdiction:** {scan['transaction_type']}")
+            c3.write(f"**Status:** Analysis Saved")
             if scan.get('violation_count', 0) > 0:
-                st.warning(f"This audit identified {scan['violation_count']} issues. You can re-scan the corrected document anytime.")
+                st.warning("Issues identified. Check original report for details.")
             else:
-                st.success("Clean Audit: No compliance issues were found.")
+                st.success("No compliance issues found.")
 else:
-    st.info("No previous scans found. Start by uploading an invoice!")
+    st.info("No previous scans found.")
 
 st.caption("© 2026 ComplianceBot AI. Not legal advice.")
 
