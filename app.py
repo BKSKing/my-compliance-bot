@@ -93,7 +93,7 @@ if st.sidebar.button("Logout"):
     st.session_state.user = None
     st.rerun()
 
-# 🛑 PRO PLAN GATEKEEPER
+# 🛑 PRO PLAN GATEKEEPER (REFINED LOGIC)
 if plan != "pro":
     st.warning("⚠️ Upgrade to Pro to unlock full features.")
     
@@ -104,12 +104,24 @@ if plan != "pro":
     - **Payment via:** {pricing['provider'].upper()}
     """)
     
-    if st.button(f"🚀 Upgrade to Pro Now"):
-        url = create_stripe_checkout(pricing['price_id'], st.session_state.user.email)
-        if url.startswith("http"):
-            st.link_button("Go to Payment Page", url)
+    # 🔧 FINAL FIX: PROVIDER-BASED BUTTON LOGIC
+    if st.button("🚀 Upgrade to Pro Now"):
+        if pricing["provider"] == "stripe":
+            url = create_stripe_checkout(
+                pricing["price_id"], 
+                st.session_state.user.email
+            )
+            if url.startswith("http"):
+                st.link_button("Pay with Stripe", url)
+            else:
+                st.error(f"Stripe Error: {url}")
+                
+        elif pricing["provider"] == "razorpay":
+            st.info("🇮🇳 Razorpay activation in progress for Indian accounts. Please check back shortly.")
+            # Future: Razorpay UI integration goes here
+            
         else:
-            st.error(f"Error creating checkout: {url}")
+            st.error("Unsupported payment provider for your region.")
     
     st.stop() 
 
@@ -197,6 +209,7 @@ if uploaded_file:
 
 st.markdown("---")
 st.caption("© 2026 ComplianceBot AI. Not legal advice.")
+
 
 
 
