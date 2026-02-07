@@ -9,9 +9,15 @@ from reportlab.platypus import SimpleDocTemplate, Paragraph, Table, Spacer
 from reportlab.lib.styles import getSampleStyleSheet, ParagraphStyle
 from reportlab.lib.enums import TA_CENTER
 
-# 🔹 IMPORTS
+# 🔹 FIXED IMPORTS
 from auth import signup, login
-from db import get_user, create_user, increment_scan, update_user_to_pro, supabase # Ensure supabase is exported from db
+from db import (
+    supabase,
+    get_user,
+    create_user,
+    increment_scan,
+    update_user_to_pro
+)
 from pricing import get_pricing
 from payments.stripe_client import create_stripe_checkout
 
@@ -33,7 +39,7 @@ if query_params.get("payment") == "success":
             session = stripe.checkout.Session.retrieve(session_id)
             if session.payment_status == "paid":
                 update_user_to_pro(session.customer_email)
-                st.success("🎉 Payment successful! Pro plan activated.")
+                st.success("🎉 Payment successful! Pro plan activated. Please refresh if needed.")
                 st.balloons()
         except Exception as e:
             st.error(f"Verification Error: {e}")
@@ -52,17 +58,19 @@ if not st.session_state.user:
             if res and hasattr(res, 'user'):
                 st.session_state.user = res.user
                 st.rerun()
+            else:
+                st.error("Invalid credentials.")
     with tab2:
         s_email = st.text_input("Email", key="sig_email")
         s_pass = st.text_input("Password", type="password", key="sig_pass")
         if st.button("Signup"):
             res = signup(s_email, s_pass)
-            if res: create_user(res.user.id, s_email)
-            st.success("Account created!")
+            if res: 
+                create_user(res.user.id, s_email)
+                st.success("Account created! You can now login.")
     st.stop()
 
 # 🚦 USAGE & PRICING LOGIC (LIVE DB CHECK)
-# Database se user ka latest data fetch karna
 user_data_resp = supabase.table("users").select("*").eq(
     "email", st.session_state.user.email
 ).single().execute()
@@ -78,11 +86,14 @@ st.sidebar.write(f"User: {st.session_state.user.email}")
 st.sidebar.write(f"Plan: {plan.upper()}")
 st.sidebar.write(f"Scans Used: {scans_used}")
 
+if st.sidebar.button("Logout"):
+    st.session_state.user = None
+    st.rerun()
+
 # 🛑 PRO PLAN GATEKEEPER
 if plan != "pro":
     st.warning("⚠️ Upgrade to Pro to unlock full features.")
     
-    # Pricing details dikhana taaki user wahi se upgrade kare
     pricing = get_pricing(user_country)
     st.subheader("Pro Subscription Details")
     st.markdown(f"""
@@ -96,9 +107,9 @@ if plan != "pro":
         if url.startswith("http"):
             st.link_button("Go to Payment Page", url)
         else:
-            st.error(url)
+            st.error(f"Error creating checkout: {url}")
     
-    st.stop() # 🚨 Yahan code ruk jayega, Free users analysis nahi kar payenge.
+    st.stop() 
 
 # ---------------- FUNCTIONS ----------------
 def extract_json_safely(text):
@@ -125,7 +136,7 @@ def generate_compliance_pdf(df, notice_draft, context):
     doc.build(elements)
     return file_path
 
-# ---------------- MAIN APP LOGIC (Only Pro users) ----------------
+# ---------------- MAIN APP LOGIC (Pro Only) ----------------
 st.title("🛡️ ComplianceBot AI")
 st.subheader("Global Invoice & Regulatory Compliance Scanner")
 
@@ -162,7 +173,7 @@ if uploaded_file:
             if json_data:
                 increment_scan(st.session_state.user.email)
                 ctx = json_data.get("invoice_context", {})
-                st.info(f"📍 Context: {ctx.get('transaction_type')} | Currency: {ctx.get('currency')}")
+                st.info(f"📍 Context: {ctx.get('transaction_type')} | Seller Country: {ctx.get('seller_country')}")
 
                 if json_data.get("violations"):
                     df = pd.DataFrame(json_data["violations"])
@@ -179,6 +190,11 @@ if uploaded_file:
                 else:
                     st.balloons()
                     st.success("No violations found!")
+            else:
+                st.error("Could not parse AI response. Please try again.")
+
+st.markdown("---")
+st.caption("© 2026 ComplianceBot AI. Not legal advice.")
 
 
 
