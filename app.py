@@ -77,12 +77,14 @@ if plan == "free" and scans_used >= 3:
     
     # AAPKA ADDED PRICING CODE
     pricing = get_pricing(user_country)
+    provider = pricing["provider"] # <--- ADDED PROVIDER HERE
 
     st.subheader("Pro Subscription")
 
     st.markdown(
         f"""
         **Price:** {pricing['currency']}{pricing['price']} / month  
+        **Payment via:** {provider.upper()}  
         **Includes:**
         - Unlimited invoice scans
         - Compliance risk detection
@@ -92,7 +94,7 @@ if plan == "free" and scans_used >= 3:
     )
     
     if st.button(f"🚀 Upgrade to Pro ({pricing['currency']}{pricing['price']})"):
-        st.info("Processing upgrade...")
+        st.info(f"Redirecting to {provider} for payment...")
     
     st.stop()
 
