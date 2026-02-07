@@ -22,7 +22,7 @@ st.set_page_config(
     layout="wide"
 )
 
-# 🔐 LOGIN / SIGNUP BLOCK (FIXED SAFE VERSION)
+# 🔐 LOGIN / SIGNUP BLOCK
 if not st.session_state.user:
     st.title("🛡️ ComplianceBot AI")
     st.subheader("Login / Signup")
@@ -32,23 +32,24 @@ if not st.session_state.user:
 
     col1, col2 = st.columns(2)
 
+    # UPDATED LOGIN LOGIC AS PER YOUR REQUEST
     if col1.button("Login"):
         res = login(email, password)
         if isinstance(res, dict) and "error" in res:
-            st.error(res["error"])
-        elif res and hasattr(res, 'user') and res.user:
+            st.error("Login failed. Check email/password or email confirmation.")
+            st.code(res["error"])
+        elif res and res.user:
             st.session_state.user = res.user
             st.success("Login successful")
             st.rerun()
         else:
-            st.error("Invalid login credentials")
+            st.error("Login failed.")
 
     if col2.button("Signup"):
         res = signup(email, password)
         if isinstance(res, dict) and "error" in res:
             st.error(res["error"])
         elif res and hasattr(res, 'user') and res.user:
-            # Database mein user entry create karte hain
             create_user(res.user.id, email)
             st.success("Signup successful. Please login.")
         else:
@@ -170,7 +171,6 @@ if uploaded_file:
                 json_data = extract_json_safely(raw_content)
 
                 if json_data and "violations" in json_data:
-                    # ✅ Database update
                     increment_scan(user_email)
                     
                     df = pd.DataFrame(json_data["violations"])
