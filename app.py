@@ -21,7 +21,8 @@ from db import (
 from pricing import get_pricing
 from payments.stripe_client import create_stripe_checkout
 
-# Stripe Setup
+# --- CONFIGURATION ---
+FREE_SCAN_LIMIT = 3
 stripe.api_key = st.secrets["STRIPE_SECRET_KEY"]
 
 if "user" not in st.session_state:
@@ -39,7 +40,7 @@ if query_params.get("payment") == "success":
             session = stripe.checkout.Session.retrieve(session_id)
             if session.payment_status == "paid":
                 update_user_to_pro(session.customer_email)
-                st.success("🎉 Payment successful! Pro plan activated. Please refresh if needed.")
+                st.success("🎉 Payment successful! Pro plan activated.")
                 st.balloons()
         except Exception as e:
             st.error(f"Verification Error: {e}")
@@ -70,7 +71,7 @@ if not st.session_state.user:
                 st.success("Account created! You can now login.")
     st.stop()
 
-# 🚦 USAGE & PRICING LOGIC (LIVE DB CHECK)
+# 🚦 FETCH USER DATA
 user_data_resp = supabase.table("users").select("*").eq(
     "email", st.session_state.user.email
 ).single().execute()
@@ -78,52 +79,23 @@ user_data_resp = supabase.table("users").select("*").eq(
 user_data = user_data_resp.data
 plan = user_data.get("plan", "free")
 scans_used = user_data.get("scans_used", 0)
-
-# 🛠️ FIXED COUNTRY & PRICING LOGIC
 user_country = user_data.get("country") or "IN"
-pricing = get_pricing(user_country)
 
 # Sidebar for Status
 st.sidebar.title("💎 Membership")
 st.sidebar.write(f"User: {st.session_state.user.email}")
 st.sidebar.write(f"Plan: {plan.upper()}")
-st.sidebar.write(f"Scans Used: {scans_used}")
+
+if plan == "free":
+    remaining = max(0, FREE_SCAN_LIMIT - scans_used)
+    st.sidebar.progress(scans_used / FREE_SCAN_LIMIT)
+    st.sidebar.write(f"Free Scans Left: {remaining}")
+else:
+    st.sidebar.success("Pro Plan: Unlimited Scans")
 
 if st.sidebar.button("Logout"):
     st.session_state.user = None
     st.rerun()
-
-# 🛑 PRO PLAN GATEKEEPER (REFINED LOGIC)
-if plan != "pro":
-    st.warning("⚠️ Upgrade to Pro to unlock full features.")
-    
-    st.subheader("Pro Subscription Details")
-    st.markdown(f"""
-    - **Price:** {pricing['currency']}{pricing['price']} / month
-    - **Features:** Unlimited scans, PDF reports, AI Notice drafts.
-    - **Payment via:** {pricing['provider'].upper()}
-    """)
-    
-    # 🔧 FINAL FIX: PROVIDER-BASED BUTTON LOGIC
-    if st.button("🚀 Upgrade to Pro Now"):
-        if pricing["provider"] == "stripe":
-            url = create_stripe_checkout(
-                pricing["price_id"], 
-                st.session_state.user.email
-            )
-            if url.startswith("http"):
-                st.link_button("Pay with Stripe", url)
-            else:
-                st.error(f"Stripe Error: {url}")
-                
-        elif pricing["provider"] == "razorpay":
-            st.info("🇮🇳 Razorpay activation in progress for Indian accounts. Please check back shortly.")
-            # Future: Razorpay UI integration goes here
-            
-        else:
-            st.error("Unsupported payment provider for your region.")
-    
-    st.stop() 
 
 # ---------------- FUNCTIONS ----------------
 def extract_json_safely(text):
@@ -150,7 +122,7 @@ def generate_compliance_pdf(df, notice_draft, context):
     doc.build(elements)
     return file_path
 
-# ---------------- MAIN APP LOGIC (Pro Only) ----------------
+# ---------------- MAIN SCANNER LOGIC ----------------
 st.title("🛡️ ComplianceBot AI")
 st.subheader("Global Invoice & Regulatory Compliance Scanner")
 
@@ -163,6 +135,33 @@ if uploaded_file:
     st.success("PDF Loaded successfully.")
 
     if st.button("Analyze Compliance"):
+        
+        # 🚫 1. PAYWALL CHECK (The Gatekeeper moved here)
+        if plan != "pro" and scans_used >= FREE_SCAN_LIMIT:
+            st.warning("🚨 Free limit reached. Upgrade to Pro to continue scanning.")
+            
+            pricing = get_pricing(user_country)
+            st.markdown(f"""
+            ### 💎 Upgrade to ComplianceBot AI Pro
+            You've used all your free scans. Get Pro for:
+            - **Unlimited Scans** for all your invoices.
+            - **Audit-Ready PDF Reports** to download and share.
+            - **Legal AI Notice Drafts** for regulatory replies.
+            - **Priority AI Processing** (Llama 3.3 70B).
+            
+            **Price:** {pricing['currency']}{pricing['price']} / month
+            """)
+
+            if pricing["provider"] == "stripe":
+                url = create_stripe_checkout(pricing["price_id"], st.session_state.user.email)
+                if url.startswith("http"):
+                    st.link_button("🚀 Upgrade to Pro Now", url)
+            elif pricing["provider"] == "razorpay":
+                st.info("🇮🇳 Razorpay activation in progress for Indian accounts.")
+            
+            st.stop() # Analysis ko yahi rok do
+
+        # 🟢 2. PROCEED WITH ANALYSIS
         with st.spinner("Analyzing with AI..."):
             prompt = f"""
             You are a senior global compliance auditor. Analyze the invoice and identify violations.
@@ -185,7 +184,9 @@ if uploaded_file:
             json_data = extract_json_safely(completion.choices[0].message.content)
 
             if json_data:
+                # Scans count badhao
                 increment_scan(st.session_state.user.email)
+                
                 ctx = json_data.get("invoice_context", {})
                 st.info(f"📍 Context: {ctx.get('transaction_type')} | Seller Country: {ctx.get('seller_country')}")
 
@@ -198,9 +199,13 @@ if uploaded_file:
                     st.subheader("Draft Regulatory Response")
                     st.text_area("Legal Draft", notice_draft, height=200)
 
-                    pdf_path = generate_compliance_pdf(df, notice_draft, ctx)
-                    with open(pdf_path, "rb") as f:
-                        st.download_button("Download Report PDF", f, "Audit_Report.pdf")
+                    # PDF sirf Pro users download kar payein (Optional Value Add)
+                    if plan == "pro":
+                        pdf_path = generate_compliance_pdf(df, notice_draft, ctx)
+                        with open(pdf_path, "rb") as f:
+                            st.download_button("Download Report PDF", f, "Audit_Report.pdf")
+                    else:
+                        st.info("💡 Upgrade to Pro to download this as a PDF report.")
                 else:
                     st.balloons()
                     st.success("No violations found!")
