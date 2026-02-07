@@ -11,3 +11,6 @@ pandas
 reportlab
 
 stripe
+
+razorpay
+
