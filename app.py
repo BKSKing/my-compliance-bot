@@ -147,22 +147,15 @@ if uploaded_file:
     invoice_text = extract_text_from_pdf(uploaded_file)
     
     if st.button("Analyze Compliance"):
-        # 🚫 1. PAYWALL CHECK
         if plan != "pro" and scans_used >= FREE_SCAN_LIMIT:
-            st.warning("🚨 Free limit reached. Upgrade to Pro to continue scanning.")
+            st.warning("🚨 Free limit reached. Upgrade to Pro.")
             pricing = get_pricing(user_country)
-            
-            st.markdown(f"### 💎 Upgrade to Pro ({pricing['currency']}{pricing['price']}/mo)")
-            
             if pricing["provider"] == "stripe":
                 url = create_stripe_checkout(pricing["price_id"], st.session_state.user.email)
-                st.link_button("🚀 Upgrade to Pro", url)
-            
+                st.link_button("🚀 Upgrade via Stripe", url)
             elif pricing["provider"] == "razorpay":
                 if st.button("🚀 Upgrade via Razorpay"):
                     st.session_state.open_razorpay = True
-                
-                # Razorpay Popup Logic (Outside button click to avoid JS iframe issues)
                 if st.session_state.open_razorpay:
                     order = create_razorpay_order(pricing["price"], st.session_state.user.email)
                     razorpay_html = f"""
@@ -173,7 +166,6 @@ if uploaded_file:
                             "amount": "{order['amount']}",
                             "currency": "INR",
                             "name": "ComplianceBot AI",
-                            "description": "Pro Subscription",
                             "order_id": "{order['id']}",
                             "handler": function (response) {{
                                 window.location.href = window.location.origin + window.location.pathname + 
@@ -184,16 +176,15 @@ if uploaded_file:
                             "prefill": {{ "email": "{st.session_state.user.email}" }},
                             "theme": {{ "color": "#0f172a" }}
                         }};
-                        var rzp = new Razorpay(options);
-                        rzp.open();
+                        var rzp = new Razorpay(options);rzp.open();
                     </script>
                     """
                     components.html(razorpay_html, height=400)
-                    st.session_state.open_razorpay = False # Reset state
+                    st.session_state.open_razorpay = False
             st.stop()
 
-        # 🟢 2. AUDITOR-GRADE ANALYSIS (Prompt preserved exactly)
         with st.spinner("Senior Auditor is reviewing your invoice..."):
+            # PROMPT (Untouched)
             prompt = f"""
             You are a senior global compliance auditor specialized in VAT, GST, and international trade laws.
             Analyze the invoice text below and identify strict compliance violations.
@@ -228,41 +219,36 @@ if uploaded_file:
             Invoice Text: {invoice_text}
             """
 
-            completion = client.chat.completions.create(
-                model="llama-3.3-70b-versatile",
-                messages=[{"role": "user", "content": prompt}]
-            )
-            
+            completion = client.chat.completions.create(model="llama-3.3-70b-versatile", messages=[{"role": "user", "content": prompt}])
             json_data = extract_json_safely(completion.choices[0].message.content)
 
             if json_data:
-                increment_scan(st.session_state.user.email)
-                ctx = json_data.get("invoice_context", {})
-                st.info(f"📍 Context: {ctx.get('transaction_type')} | {ctx.get('seller_country')} -> {ctx.get('buyer_country')}")
-
-                if json_data.get("violations"):
-                    df = pd.DataFrame(json_data["violations"])
-                    st.subheader("⚠️ Compliance Violations Detected")
-                    st.dataframe(df, use_container_width=True)
-                    
-                    st.subheader("📝 Regulatory Response Draft")
-                    st.text_area("Copy this draft:", json_data.get("notice_reply_draft", ""), height=200)
-
-                    if plan == "pro":
-                        pdf_path = generate_compliance_pdf(df, json_data.get("notice_reply_draft", ""), ctx)
-                        with open(pdf_path, "rb") as f:
-                            st.download_button("📥 Download Official Report", f, "Audit_Report.pdf")
-                    else:
-                        st.info("💡 Pro users can download this as an official PDF report.")
-                else:
-                    st.balloons()
-                    st.success("✅ No violations found. This invoice appears compliant.")
+                # Save scan details to DB for history
+                supabase.table("scans").insert({
+                    "user_email": st.session_state.user.email,
+                    "transaction_type": json_data.get("invoice_context", {}).get("transaction_type"),
+                    "violation_count": len(json_data.get("violations", [])),
+                    "risk_score": "High" if any(v['risk_level'] == 'HIGH' for v in json_data.get('violations', [])) else "Low"
+                }).execute()
                 
-                st.rerun() 
-            else:
-                st.error("AI Error: JSON Parsing failed. Try again.")
+                increment_scan(st.session_state.user.email)
+                st.rerun()
 
+# --- 📜 SCAN HISTORY SECTION ---
 st.markdown("---")
+st.subheader("📜 Your Scan History")
+
+history_resp = supabase.table("scans").select("*").eq("user_email", st.session_state.user.email).order("created_at", desc=True).limit(10).execute()
+
+if history_resp.data:
+    history_df = pd.DataFrame(history_resp.data)
+    # Cleaning table for display
+    display_df = history_df[['created_at', 'transaction_type', 'violation_count', 'risk_score']]
+    display_df.columns = ['Date', 'Type', 'Violations Found', 'Risk Level']
+    st.table(display_df)
+else:
+    st.info("No previous scans found. Start by uploading an invoice!")
+
 st.caption("© 2026 ComplianceBot AI. Not legal advice.")
 
 
