@@ -11,7 +11,7 @@ from reportlab.lib.enums import TA_CENTER
 
 # 🔹 IMPORTS
 from auth import signup, login
-from db import get_user, create_user, increment_scan, update_user_to_pro
+from db import get_user, create_user, increment_scan, update_user_to_pro, supabase # Ensure supabase is exported from db
 from pricing import get_pricing
 from payments.stripe_client import create_stripe_checkout
 
@@ -61,22 +61,44 @@ if not st.session_state.user:
             st.success("Account created!")
     st.stop()
 
-# 🚦 USAGE & PRICING LOGIC
-user_data = get_user(st.session_state.user.email)
+# 🚦 USAGE & PRICING LOGIC (LIVE DB CHECK)
+# Database se user ka latest data fetch karna
+user_data_resp = supabase.table("users").select("*").eq(
+    "email", st.session_state.user.email
+).single().execute()
+
+user_data = user_data_resp.data
 plan = user_data.get("plan", "free")
 scans_used = user_data.get("scans_used", 0)
 user_country = user_data.get("country", "India")
 
+# Sidebar for Status
 st.sidebar.title("💎 Membership")
-st.sidebar.write(f"Plan: {plan.upper()} | Scans: {scans_used}")
+st.sidebar.write(f"User: {st.session_state.user.email}")
+st.sidebar.write(f"Plan: {plan.upper()}")
+st.sidebar.write(f"Scans Used: {scans_used}")
 
-if plan == "free" and scans_used >= 3:
-    st.error("🚨 Free limit reached. Upgrade to continue.")
+# 🛑 PRO PLAN GATEKEEPER
+if plan != "pro":
+    st.warning("⚠️ Upgrade to Pro to unlock full features.")
+    
+    # Pricing details dikhana taaki user wahi se upgrade kare
     pricing = get_pricing(user_country)
-    if st.button(f"🚀 Upgrade to Pro ({pricing['currency']}{pricing['price']})"):
+    st.subheader("Pro Subscription Details")
+    st.markdown(f"""
+    - **Price:** {pricing['currency']}{pricing['price']} / month
+    - **Features:** Unlimited scans, PDF reports, AI Notice drafts.
+    - **Payment via:** {pricing['provider'].upper()}
+    """)
+    
+    if st.button(f"🚀 Upgrade to Pro Now"):
         url = create_stripe_checkout(pricing['price_id'], st.session_state.user.email)
-        st.link_button("Pay Now", url)
-    st.stop()
+        if url.startswith("http"):
+            st.link_button("Go to Payment Page", url)
+        else:
+            st.error(url)
+    
+    st.stop() # 🚨 Yahan code ruk jayega, Free users analysis nahi kar payenge.
 
 # ---------------- FUNCTIONS ----------------
 def extract_json_safely(text):
@@ -103,19 +125,20 @@ def generate_compliance_pdf(df, notice_draft, context):
     doc.build(elements)
     return file_path
 
-# ---------------- MAIN APP LOGIC ----------------
+# ---------------- MAIN APP LOGIC (Only Pro users) ----------------
 st.title("🛡️ ComplianceBot AI")
+st.subheader("Global Invoice & Regulatory Compliance Scanner")
+
 client = Groq(api_key=os.getenv("GROQ_API_KEY"))
 
 uploaded_file = st.file_uploader("Upload Invoice (PDF)", type="pdf")
 
 if uploaded_file:
     invoice_text = extract_text_from_pdf(uploaded_file)
-    st.success("PDF Loaded.")
+    st.success("PDF Loaded successfully.")
 
     if st.button("Analyze Compliance"):
-        with st.spinner("Analyzing..."):
-            # AAPKA PURANA PROMPT
+        with st.spinner("Analyzing with AI..."):
             prompt = f"""
             You are a senior global compliance auditor. Analyze the invoice and identify violations.
             OUTPUT FORMAT (STRICT JSON ONLY):
@@ -144,7 +167,7 @@ if uploaded_file:
                 if json_data.get("violations"):
                     df = pd.DataFrame(json_data["violations"])
                     st.subheader("Identified Compliance Violations")
-                    st.dataframe(df, use_container_width=True) # TABLE DISPLAY HERE
+                    st.dataframe(df, use_container_width=True)
 
                     notice_draft = json_data.get("notice_reply_draft", "")
                     st.subheader("Draft Regulatory Response")
