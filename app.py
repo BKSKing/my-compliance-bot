@@ -23,9 +23,27 @@ st.set_page_config(
     layout="wide"
 )
 
+# 🚀 LANDING PAGE (ADDKARDIA: Login/Signup UI se pehle)
+if "user" not in st.session_state or st.session_state.user is None:
+    st.title("ComplianceBot AI")
+
+    st.markdown("""
+    **Global Compliance & Invoice Risk Detection Platform**
+
+    - AI-powered compliance checks  
+    - Audit-ready reports  
+    - Regulatory notice drafts  
+
+    📧 Contact: support@compliancebot.ai  
+    """)
+
+    st.markdown("[Privacy Policy](#)")
+    st.markdown("[Terms & Conditions](#)")
+    
+    st.markdown("---") # Visual separator
+
 # 🔐 LOGIN / SIGNUP BLOCK
 if not st.session_state.user:
-    st.title("🛡️ ComplianceBot AI")
     st.subheader("Login / Signup")
 
     email = st.text_input("Email", key="email")
@@ -75,9 +93,8 @@ st.sidebar.write(f"Scans Used: {scans_used}")
 if plan == "free" and scans_used >= 3:
     st.error("🚨 Free plan limit reached (3 scans). Please upgrade to Professional to continue.")
     
-    # AAPKA ADDED PRICING CODE
     pricing = get_pricing(user_country)
-    provider = pricing["provider"] # <--- ADDED PROVIDER HERE
+    provider = pricing["provider"] 
 
     st.subheader("Pro Subscription")
 
@@ -161,59 +178,7 @@ if uploaded_file:
             
             prompt = f"""
             You are a senior global compliance auditor with experience in taxation, invoicing regulations, and trade laws across multiple jurisdictions.
-
-            Your task is to analyze the provided invoice and identify compliance issues ONLY where they are logically and legally applicable.
-
-            -------------------------
-            STEP 1: CONTEXT DETERMINATION (MANDATORY)
-            -------------------------
-            First, determine the invoice context strictly from the invoice text:
-            - Seller country (if mentioned)
-            - Buyer country (if mentioned)
-            - Transaction type: Domestic | Cross-border export/import | Unable to determine
-            ALSO determine the applicable CURRENCY based on the seller country. Use the correct local currency symbol.
-
-            -------------------------
-            STEP 2: VIOLATION IDENTIFICATION
-            -------------------------
-            Identify ONLY real, evidence-based compliance violations. explain WHAT in the invoice triggered the violation.
-
-            -------------------------
-            STEP 3: RISK & FINANCIAL EXPOSURE
-            -------------------------
-            Provide an ESTIMATED financial exposure using the correct currency symbol.
-            Assign: Risk level (LOW/MEDIUM/HIGH) and Regulatory notice probability (%).
-
-            -------------------------
-            STEP 4: REGULATORY RESPONSE DRAFT
-            -------------------------
-            Draft a professional, neutral compliance response.
-
-            OUTPUT FORMAT (STRICT JSON ONLY):
-            {{
-              "invoice_context": {{
-                "seller_country": "",
-                "buyer_country": "",
-                "transaction_type": "",
-                "currency": ""
-              }},
-              "violations": [
-                {{
-                  "violation": "",
-                  "evidence_from_invoice": "",
-                  "law_reference": "",
-                  "financial_exposure": "",
-                  "liable_entity": "",
-                  "credit_or_deduction_impact": "",
-                  "risk_level": "",
-                  "regulatory_notice_probability_percent": ""
-                }}
-              ],
-              "notice_reply_draft": ""
-            }}
-
-            Invoice Text:
-            {invoice_text}
+            ... (rest of your prompt)
             """
 
             try:
