@@ -3,6 +3,7 @@ import stripe
 import json
 import pandas as pd
 import os
+import streamlit.components.v1 as components
 from groq import Groq
 from PyPDF2 import PdfReader
 from reportlab.platypus import SimpleDocTemplate, Paragraph, Table, Spacer
@@ -20,6 +21,7 @@ from db import (
 )
 from pricing import get_pricing
 from payments.stripe_client import create_stripe_checkout
+from razorpay_client import client as razorpay_client, create_razorpay_order
 
 # --- CONFIGURATION ---
 FREE_SCAN_LIMIT = 3
@@ -31,19 +33,38 @@ if "user" not in st.session_state:
 # ---------------- PAGE SETUP ----------------
 st.set_page_config(page_title="ComplianceBot AI", page_icon="🛡️", layout="wide")
 
-# ✅ PAYMENT SUCCESS HANDLER
-query_params = st.query_params
-if query_params.get("payment") == "success":
-    session_id = query_params.get("session_id")
+# ✅ PAYMENT HANDLERS (STRIPE & RAZORPAY)
+params = st.query_params
+
+# 1. Stripe Handler
+if params.get("payment") == "success":
+    session_id = params.get("session_id")
     if session_id:
         try:
             session = stripe.checkout.Session.retrieve(session_id)
             if session.payment_status == "paid":
                 update_user_to_pro(session.customer_email)
-                st.success("🎉 Payment successful! Pro plan activated.")
+                st.success("🎉 Stripe Payment successful! Pro activated.")
                 st.balloons()
         except Exception as e:
-            st.error(f"Verification Error: {e}")
+            st.error(f"Stripe Verification Error: {e}")
+
+# 2. Razorpay Handler
+if "razorpay_payment_id" in params:
+    try:
+        razorpay_client.utility.verify_payment_signature({
+            "razorpay_order_id": params["razorpay_order_id"],
+            "razorpay_payment_id": params["razorpay_payment_id"],
+            "razorpay_signature": params["razorpay_signature"],
+        })
+        update_user_to_pro(st.session_state.user.email)
+        st.success("🎉 Razorpay Payment successful! Pro activated.")
+        st.balloons()
+        # Clean URL and refresh
+        st.query_params.clear()
+        st.rerun()
+    except Exception as e:
+        st.error("Razorpay payment verification failed.")
 
 # 🚀 LANDING PAGE / LOGIN / SIGNUP
 if not st.session_state.user:
@@ -136,45 +157,54 @@ if uploaded_file:
 
     if st.button("Analyze Compliance"):
         
-        # 🚫 1. PAYWALL CHECK (The Gatekeeper moved here)
+        # 🚫 1. PAYWALL CHECK
         if plan != "pro" and scans_used >= FREE_SCAN_LIMIT:
             st.warning("🚨 Free limit reached. Upgrade to Pro to continue scanning.")
             
             pricing = get_pricing(user_country)
-            st.markdown(f"""
-            ### 💎 Upgrade to ComplianceBot AI Pro
-            You've used all your free scans. Get Pro for:
-            - **Unlimited Scans** for all your invoices.
-            - **Audit-Ready PDF Reports** to download and share.
-            - **Legal AI Notice Drafts** for regulatory replies.
-            - **Priority AI Processing** (Llama 3.3 70B).
-            
-            **Price:** {pricing['currency']}{pricing['price']} / month
-            """)
+            st.markdown(f"### 💎 Upgrade to Pro ({pricing['currency']}{pricing['price']}/mo)")
 
+            # STRIPE GATEWAY
             if pricing["provider"] == "stripe":
                 url = create_stripe_checkout(pricing["price_id"], st.session_state.user.email)
                 if url.startswith("http"):
-                    st.link_button("🚀 Upgrade to Pro Now", url)
-            elif pricing["provider"] == "razorpay":
-                st.info("🇮🇳 Razorpay activation in progress for Indian accounts.")
+                    st.link_button("🚀 Pay with Stripe", url)
             
-            st.stop() # Analysis ko yahi rok do
+            # RAZORPAY GATEWAY
+            elif pricing["provider"] == "razorpay":
+                if st.button("🚀 Upgrade via Razorpay (India)"):
+                    order = create_razorpay_order(pricing["price"], st.session_state.user.email)
+                    
+                    razorpay_html = f"""
+                    <script src="https://checkout.razorpay.com/v1/checkout.js"></script>
+                    <script>
+                    var options = {{
+                        "key": "{st.secrets['RAZORPAY_KEY_ID']}",
+                        "amount": "{order['amount']}",
+                        "currency": "INR",
+                        "name": "ComplianceBot AI",
+                        "description": "Pro Subscription",
+                        "order_id": "{order['id']}",
+                        "handler": function (response) {{
+                            window.parent.location.href = window.parent.location.origin + window.parent.location.pathname + 
+                              "?razorpay_payment_id=" + response.razorpay_payment_id +
+                              "&razorpay_order_id=" + response.razorpay_order_id +
+                              "&razorpay_signature=" + response.razorpay_signature;
+                        }},
+                        "prefill": {{ "email": "{st.session_state.user.email}" }},
+                        "theme": {{ "color": "#0f172a" }}
+                    }};
+                    var rzp = new Razorpay(options);
+                    rzp.open();
+                    </script>
+                    """
+                    components.html(razorpay_html, height=0)
+            
+            st.stop() 
 
         # 🟢 2. PROCEED WITH ANALYSIS
         with st.spinner("Analyzing with AI..."):
-            prompt = f"""
-            You are a senior global compliance auditor. Analyze the invoice and identify violations.
-            OUTPUT FORMAT (STRICT JSON ONLY):
-            {{
-              "invoice_context": {{"transaction_type": "", "currency": "", "seller_country": ""}},
-              "violations": [
-                {{"violation": "", "evidence_from_invoice": "", "law_reference": "", "risk_level": "", "financial_exposure": "", "regulatory_notice_probability_percent": ""}}
-              ],
-              "notice_reply_draft": ""
-            }}
-            Invoice Text: {invoice_text}
-            """
+            prompt = f"Analyze this invoice for compliance violations. Output JSON only. Text: {invoice_text}"
             
             completion = client.chat.completions.create(
                 model="llama-3.3-70b-versatile",
@@ -184,33 +214,22 @@ if uploaded_file:
             json_data = extract_json_safely(completion.choices[0].message.content)
 
             if json_data:
-                # Scans count badhao
                 increment_scan(st.session_state.user.email)
-                
-                ctx = json_data.get("invoice_context", {})
-                st.info(f"📍 Context: {ctx.get('transaction_type')} | Seller Country: {ctx.get('seller_country')}")
-
+                st.info("Analysis Complete.")
                 if json_data.get("violations"):
                     df = pd.DataFrame(json_data["violations"])
-                    st.subheader("Identified Compliance Violations")
                     st.dataframe(df, use_container_width=True)
-
-                    notice_draft = json_data.get("notice_reply_draft", "")
-                    st.subheader("Draft Regulatory Response")
-                    st.text_area("Legal Draft", notice_draft, height=200)
-
-                    # PDF sirf Pro users download kar payein (Optional Value Add)
+                    
                     if plan == "pro":
-                        pdf_path = generate_compliance_pdf(df, notice_draft, ctx)
+                        pdf_path = generate_compliance_pdf(df, json_data.get("notice_reply_draft", ""), json_data.get("invoice_context", {}))
                         with open(pdf_path, "rb") as f:
                             st.download_button("Download Report PDF", f, "Audit_Report.pdf")
                     else:
-                        st.info("💡 Upgrade to Pro to download this as a PDF report.")
+                        st.info("💡 Upgrade to Pro to download the PDF report.")
                 else:
-                    st.balloons()
                     st.success("No violations found!")
             else:
-                st.error("Could not parse AI response. Please try again.")
+                st.error("AI Error. Please try again.")
 
 st.markdown("---")
 st.caption("© 2026 ComplianceBot AI. Not legal advice.")
