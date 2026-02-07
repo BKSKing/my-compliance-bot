@@ -92,11 +92,23 @@ plan = user_data.get("plan", "free")
 scans_used = user_data.get("scans_used", 0)
 user_country = user_data.get("country") or "IN"
 
-# Sidebar
+# 💎 SIDEBAR (FIXED UI & LOGIC)
 st.sidebar.title("💎 Membership")
-st.sidebar.write(f"Plan: {plan.upper()}")
+if st.session_state.user:
+    st.sidebar.write(f"User: **{st.session_state.user.email}**")
+st.sidebar.write(f"Plan: **{plan.upper()}**")
+
 if plan == "free":
-    st.sidebar.write(f"Free Scans Left: {max(0, FREE_SCAN_LIMIT - scans_used)}")
+    remaining = max(0, FREE_SCAN_LIMIT - scans_used)
+    progress_val = min(1.0, scans_used / FREE_SCAN_LIMIT)
+    st.sidebar.progress(progress_val)
+    st.sidebar.write(f"Free Scans Left: {remaining} / {FREE_SCAN_LIMIT}")
+else:
+    st.sidebar.success("Pro Plan: Unlimited Scans")
+
+if st.sidebar.button("Logout"):
+    st.session_state.clear() # Clear all state
+    st.rerun()
 
 # ---------------- FUNCTIONS ----------------
 def extract_json_safely(text):
@@ -133,10 +145,13 @@ if uploaded_file:
     invoice_text = extract_text_from_pdf(uploaded_file)
     
     if st.button("Analyze Compliance"):
-        # 🚫 PAYWALL CHECK
+        # 🚫 1. PAYWALL CHECK
         if plan != "pro" and scans_used >= FREE_SCAN_LIMIT:
-            st.warning("🚨 Free limit reached.")
+            st.warning("🚨 Free limit reached. Upgrade to Pro to continue scanning.")
             pricing = get_pricing(user_country)
+            
+            st.markdown(f"### 💎 Upgrade to Pro ({pricing['currency']}{pricing['price']}/mo)")
+            
             if pricing["provider"] == "stripe":
                 url = create_stripe_checkout(pricing["price_id"], st.session_state.user.email)
                 st.link_button("🚀 Upgrade to Pro", url)
@@ -147,9 +162,8 @@ if uploaded_file:
                     components.html(razorpay_html, height=0)
             st.stop()
 
-        # 🟢 AUDITOR-GRADE ANALYSIS
+        # 🟢 2. AUDITOR-GRADE ANALYSIS (Prompt preserved exactly)
         with st.spinner("Senior Auditor is reviewing your invoice..."):
-            # 🔥 THE ULTIMATE PROMPT FIX
             prompt = f"""
             You are a senior global compliance auditor specialized in VAT, GST, and international trade laws.
             Analyze the invoice text below and identify strict compliance violations.
@@ -192,7 +206,9 @@ if uploaded_file:
             json_data = extract_json_safely(completion.choices[0].message.content)
 
             if json_data:
+                # 🔥 FIX: Increment and RERUN to update sidebar immediately
                 increment_scan(st.session_state.user.email)
+                
                 ctx = json_data.get("invoice_context", {})
                 st.info(f"📍 Context: {ctx.get('transaction_type')} | {ctx.get('seller_country')} -> {ctx.get('buyer_country')}")
 
@@ -213,6 +229,9 @@ if uploaded_file:
                 else:
                     st.balloons()
                     st.success("✅ No violations found. This invoice appears compliant.")
+                
+                # Small delay to let user see balloons before rerun if success
+                st.rerun() 
             else:
                 st.error("AI Error: JSON Parsing failed. Try again.")
 
