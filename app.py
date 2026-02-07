@@ -234,18 +234,33 @@ if uploaded_file:
                 increment_scan(st.session_state.user.email)
                 st.rerun()
 
-# --- 📜 SCAN HISTORY SECTION ---
+# --- 📜 SCAN HISTORY SECTION (ENHANCED) ---
 st.markdown("---")
 st.subheader("📜 Your Scan History")
 
-history_resp = supabase.table("scans").select("*").eq("user_email", st.session_state.user.email).order("created_at", desc=True).limit(10).execute()
+history_resp = supabase.table("scans").select("*").eq(
+    "user_email", st.session_state.user.email
+).order("created_at", desc=True).limit(10).execute()
 
 if history_resp.data:
-    history_df = pd.DataFrame(history_resp.data)
-    # Cleaning table for display
-    display_df = history_df[['created_at', 'transaction_type', 'violation_count', 'risk_score']]
-    display_df.columns = ['Date', 'Type', 'Violations Found', 'Risk Level']
-    st.table(display_df)
+    for scan in history_resp.data:
+        # Date cleaning
+        date_str = scan['created_at'][:10] # YYYY-MM-DD
+        risk_icon = "🔴" if scan['risk_score'] == "High" else "🟢"
+        
+        with st.expander(f"📅 {date_str} | {scan['transaction_type']} | {risk_icon} Risk: {scan['risk_score']}"):
+            col1, col2, col3 = st.columns(3)
+            with col1:
+                st.metric("Violations", scan['violation_count'])
+            with col2:
+                st.write(f"**Jurisdiction:** {scan['transaction_type']}")
+            with col3:
+                st.write(f"**Status:** Analysis Saved")
+            
+            if scan.get('violation_count', 0) > 0:
+                st.warning(f"This audit identified {scan['violation_count']} issues. You can re-scan the corrected document anytime.")
+            else:
+                st.success("Clean Audit: No compliance issues were found.")
 else:
     st.info("No previous scans found. Start by uploading an invoice!")
 
