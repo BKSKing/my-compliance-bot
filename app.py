@@ -1,4 +1,5 @@
 import streamlit as st
+import stripe
 import json
 import pandas as pd
 import os
@@ -8,225 +9,153 @@ from reportlab.platypus import SimpleDocTemplate, Paragraph, Table, Spacer
 from reportlab.lib.styles import getSampleStyleSheet, ParagraphStyle
 from reportlab.lib.enums import TA_CENTER
 
-# 🔹 TOP of app.py: IMPORTS & SESSION STATE
+# 🔹 IMPORTS
 from auth import signup, login
-from db import get_user, create_user, increment_scan
-from pricing import get_pricing  # <--- Added Import
+from db import get_user, create_user, increment_scan, update_user_to_pro
+from pricing import get_pricing
+from payments.stripe_client import create_stripe_checkout
+
+# Stripe Setup
+stripe.api_key = st.secrets["STRIPE_SECRET_KEY"]
 
 if "user" not in st.session_state:
     st.session_state.user = None
 
 # ---------------- PAGE SETUP ----------------
-st.set_page_config(
-    page_title="ComplianceBot AI",
-    page_icon="🛡️",
-    layout="wide"
-)
+st.set_page_config(page_title="ComplianceBot AI", page_icon="🛡️", layout="wide")
 
-# 🚀 LANDING PAGE (ADDKARDIA: Login/Signup UI se pehle)
-if "user" not in st.session_state or st.session_state.user is None:
-    st.title("ComplianceBot AI")
+# ✅ PAYMENT SUCCESS HANDLER
+query_params = st.query_params
+if query_params.get("payment") == "success":
+    session_id = query_params.get("session_id")
+    if session_id:
+        try:
+            session = stripe.checkout.Session.retrieve(session_id)
+            if session.payment_status == "paid":
+                update_user_to_pro(session.customer_email)
+                st.success("🎉 Payment successful! Pro plan activated.")
+                st.balloons()
+        except Exception as e:
+            st.error(f"Verification Error: {e}")
 
-    st.markdown("""
-    **Global Compliance & Invoice Risk Detection Platform**
-
-    - AI-powered compliance checks  
-    - Audit-ready reports  
-    - Regulatory notice drafts  
-
-    📧 Contact: support@compliancebot.ai  
-    """)
-
-    st.markdown("[Privacy Policy](#)")
-    st.markdown("[Terms & Conditions](#)")
-    
-    st.markdown("---") # Visual separator
-
-# 🔐 LOGIN / SIGNUP BLOCK
+# 🚀 LANDING PAGE / LOGIN / SIGNUP
 if not st.session_state.user:
-    st.subheader("Login / Signup")
-
-    email = st.text_input("Email", key="email")
-    password = st.text_input("Password (min 6 chars)", type="password", key="password")
-
-    col1, col2 = st.columns(2)
-
-    if col1.button("Login"):
-        res = login(email, password)
-        if isinstance(res, dict) and "error" in res:
-            st.error("Login failed. Check email/password or email confirmation.")
-            st.code(res["error"])
-        elif res and res.user:
-            st.session_state.user = res.user
-            st.success("Login successful")
-            st.rerun()
-        else:
-            st.error("Login failed.")
-
-    if col2.button("Signup"):
-        res = signup(email, password)
-        if isinstance(res, dict) and "error" in res:
-            st.error(res["error"])
-        elif res and hasattr(res, 'user') and res.user:
-            create_user(res.user.id, email)
-            st.success("Signup successful. Please login.")
-        else:
-            st.error("Signup failed")
-
+    st.title("🛡️ ComplianceBot AI")
+    st.markdown("**Global Compliance & Invoice Risk Detection Platform**")
+    
+    tab1, tab2 = st.tabs(["Login", "Signup"])
+    with tab1:
+        email = st.text_input("Email", key="login_email")
+        password = st.text_input("Password", type="password", key="login_pass")
+        if st.button("Login"):
+            res = login(email, password)
+            if res and hasattr(res, 'user'):
+                st.session_state.user = res.user
+                st.rerun()
+    with tab2:
+        s_email = st.text_input("Email", key="sig_email")
+        s_pass = st.text_input("Password", type="password", key="sig_pass")
+        if st.button("Signup"):
+            res = signup(s_email, s_pass)
+            if res: create_user(res.user.id, s_email)
+            st.success("Account created!")
     st.stop()
 
-# 🚦 PLAN + USAGE LIMIT LOGIC
-user_email = st.session_state.user.email
-user_data = get_user(user_email)
-
+# 🚦 USAGE & PRICING LOGIC
+user_data = get_user(st.session_state.user.email)
 plan = user_data.get("plan", "free")
 scans_used = user_data.get("scans_used", 0)
-user_country = user_data.get("country", "India") # User ki country DB se fetch ki
+user_country = user_data.get("country", "India")
 
-# Sidebar for Status
 st.sidebar.title("💎 Membership")
-st.sidebar.write(f"User: {user_email}")
-st.sidebar.write(f"Plan: {plan.upper()}")
-st.sidebar.write(f"Scans Used: {scans_used}")
+st.sidebar.write(f"Plan: {plan.upper()} | Scans: {scans_used}")
 
-# --- PRICING DISPLAY BLOCK ---
 if plan == "free" and scans_used >= 3:
-    st.error("🚨 Free plan limit reached (3 scans). Please upgrade to Professional to continue.")
-    
+    st.error("🚨 Free limit reached. Upgrade to continue.")
     pricing = get_pricing(user_country)
-    provider = pricing["provider"] 
-
-    st.subheader("Pro Subscription")
-
-    st.markdown(
-        f"""
-        **Price:** {pricing['currency']}{pricing['price']} / month  
-        **Payment via:** {provider.upper()}  
-        **Includes:**
-        - Unlimited invoice scans
-        - Compliance risk detection
-        - Audit-ready PDF reports
-        - Regulatory notice drafts
-        """
-    )
-    
     if st.button(f"🚀 Upgrade to Pro ({pricing['currency']}{pricing['price']})"):
-        st.info(f"Redirecting to {provider} for payment...")
-    
+        url = create_stripe_checkout(pricing['price_id'], st.session_state.user.email)
+        st.link_button("Pay Now", url)
     st.stop()
-
-if st.sidebar.button("Logout"):
-    st.session_state.user = None
-    st.rerun()
 
 # ---------------- FUNCTIONS ----------------
 def extract_json_safely(text):
     try:
         clean_text = text.replace("```json", "").replace("```", "").strip()
-        start = clean_text.find("{")
-        end = clean_text.rfind("}") + 1
-        if start == -1 or end == -1: return None
+        start, end = clean_text.find("{"), clean_text.rfind("}") + 1
         return json.loads(clean_text[start:end])
-    except:
-        return None
+    except: return None
 
 def extract_text_from_pdf(pdf_file):
     reader = PdfReader(pdf_file)
-    text = ""
-    for page in reader.pages:
-        if page.extract_text(): text += page.extract_text()
-    return text
+    return "".join([page.extract_text() for page in reader.pages if page.extract_text()])
 
 def generate_compliance_pdf(df, notice_draft, context):
     file_path = "Compliance_Audit_Report.pdf"
     doc = SimpleDocTemplate(file_path)
     styles = getSampleStyleSheet()
-    header_style = ParagraphStyle("Header", parent=styles["Title"], alignment=TA_CENTER)
-    
-    elements = []
-    elements.append(Paragraph("COMPLIANCE AUDIT REPORT", header_style))
-    elements.append(Spacer(1, 10))
-    elements.append(Paragraph(f"<b>Detected Context:</b> {context.get('transaction_type', 'N/A')} | {context.get('currency', 'N/A')}", styles["Normal"]))
-    elements.append(Spacer(1, 20))
-    
-    elements.append(Paragraph("<b>Identified Compliance Issues</b>", styles["Heading2"]))
+    elements = [Paragraph("COMPLIANCE AUDIT REPORT", styles["Title"]), Spacer(1, 12)]
+    elements.append(Paragraph(f"Context: {context.get('transaction_type')}", styles["Normal"]))
     table_data = [df.columns.tolist()] + df.values.tolist()
-    elements.append(Table(table_data, repeatRows=1))
-    
-    elements.append(Spacer(1, 20))
-    elements.append(Paragraph("<b>Draft Response</b>", styles["Heading2"]))
+    elements.append(Table(table_data))
+    elements.append(Paragraph("Draft Response:", styles["Heading2"]))
     elements.append(Paragraph(notice_draft.replace("\n", "<br/>"), styles["Normal"]))
-    
     doc.build(elements)
     return file_path
 
-# ---------------- MAIN APP ----------------
+# ---------------- MAIN APP LOGIC ----------------
 st.title("🛡️ ComplianceBot AI")
-st.subheader("Global Invoice & Regulatory Compliance Scanner")
-
 client = Groq(api_key=os.getenv("GROQ_API_KEY"))
 
 uploaded_file = st.file_uploader("Upload Invoice (PDF)", type="pdf")
 
 if uploaded_file:
-    with st.spinner("Extracting text..."):
-        invoice_text = extract_text_from_pdf(uploaded_file)
-    st.success("Document processed successfully.")
+    invoice_text = extract_text_from_pdf(uploaded_file)
+    st.success("PDF Loaded.")
 
     if st.button("Analyze Compliance"):
-        with st.spinner("Performing regulatory analysis..."):
-            
+        with st.spinner("Analyzing..."):
+            # AAPKA PURANA PROMPT
             prompt = f"""
-            You are a senior global compliance auditor with experience in taxation, invoicing regulations, and trade laws across multiple jurisdictions.
-            ... (rest of your prompt)
+            You are a senior global compliance auditor. Analyze the invoice and identify violations.
+            OUTPUT FORMAT (STRICT JSON ONLY):
+            {{
+              "invoice_context": {{"transaction_type": "", "currency": "", "seller_country": ""}},
+              "violations": [
+                {{"violation": "", "evidence_from_invoice": "", "law_reference": "", "risk_level": "", "financial_exposure": "", "regulatory_notice_probability_percent": ""}}
+              ],
+              "notice_reply_draft": ""
+            }}
+            Invoice Text: {invoice_text}
             """
+            
+            completion = client.chat.completions.create(
+                model="llama-3.3-70b-versatile",
+                messages=[{"role": "user", "content": prompt}]
+            )
+            
+            json_data = extract_json_safely(completion.choices[0].message.content)
 
-            try:
-                completion = client.chat.completions.create(
-                    model="llama-3.3-70b-versatile",
-                    messages=[{"role": "user", "content": prompt}],
-                )
+            if json_data:
+                increment_scan(st.session_state.user.email)
+                ctx = json_data.get("invoice_context", {})
+                st.info(f"📍 Context: {ctx.get('transaction_type')} | Currency: {ctx.get('currency')}")
 
-                raw_content = completion.choices[0].message.content
-                json_data = extract_json_safely(raw_content)
+                if json_data.get("violations"):
+                    df = pd.DataFrame(json_data["violations"])
+                    st.subheader("Identified Compliance Violations")
+                    st.dataframe(df, use_container_width=True) # TABLE DISPLAY HERE
 
-                if json_data:
-                    increment_scan(user_email)
-                    
-                    ctx = json_data.get("invoice_context", {})
-                    st.info(f"📍 **Context Detected:** {ctx.get('transaction_type')} | Seller: {ctx.get('seller_country')} | Currency: {ctx.get('currency')}")
-                    
-                    if "violations" in json_data and json_data["violations"]:
-                        df = pd.DataFrame(json_data["violations"])
-                        notice_draft = json_data.get("notice_reply_draft", "No draft generated.")
+                    notice_draft = json_data.get("notice_reply_draft", "")
+                    st.subheader("Draft Regulatory Response")
+                    st.text_area("Legal Draft", notice_draft, height=200)
 
-                        st.success("Analysis Complete!")
-                        st.subheader("Identified Compliance Violations")
-                        st.dataframe(df, use_container_width=True)
-
-                        try:
-                            probs = df["regulatory_notice_probability_percent"].astype(str).str.replace("%", "")
-                            avg_risk = pd.to_numeric(probs, errors='coerce').fillna(0).mean()
-                            st.metric("Overall Risk Probability", f"{round(avg_risk, 1)}%")
-                        except:
-                            st.metric("Overall Risk Probability", "N/A")
-
-                        st.subheader("Draft Regulatory Response")
-                        st.text_area("Legal Response Draft", notice_draft, height=250)
-
-                        pdf_file = generate_compliance_pdf(df, notice_draft, ctx)
-                        with open(pdf_file, "rb") as f:
-                            st.download_button("Download PDF Report", f, "Audit_Report.pdf", "application/pdf")
-                    else:
-                        st.balloons()
-                        st.success("No compliance violations found for this jurisdiction!")
+                    pdf_path = generate_compliance_pdf(df, notice_draft, ctx)
+                    with open(pdf_path, "rb") as f:
+                        st.download_button("Download Report PDF", f, "Audit_Report.pdf")
                 else:
-                    st.error("AI output error. Please check the document or try again.")
-            except Exception as e:
-                st.error(f"Analysis failed: {e}")
-
-st.markdown("---")
-st.markdown("**Disclaimer:** Automated insights only. Not legal advice.")
+                    st.balloons()
+                    st.success("No violations found!")
 
 
 
