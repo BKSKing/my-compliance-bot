@@ -9,3 +9,5 @@ supabase
 pandas
 
 reportlab
+
+stripe
