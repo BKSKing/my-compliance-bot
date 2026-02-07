@@ -63,6 +63,7 @@ user_data = get_user(user_email)
 
 plan = user_data.get("plan", "free")
 scans_used = user_data.get("scans_used", 0)
+user_country = user_data.get("country", "India") # User ki country DB se fetch ki
 
 # Sidebar for Status
 st.sidebar.title("💎 Membership")
@@ -70,32 +71,28 @@ st.sidebar.write(f"User: {user_email}")
 st.sidebar.write(f"Plan: {plan.upper()}")
 st.sidebar.write(f"Scans Used: {scans_used}")
 
-# --- DYNAMIC PRICING & LIMIT BLOCK ---
+# --- PRICING DISPLAY BLOCK ---
 if plan == "free" and scans_used >= 3:
     st.error("🚨 Free plan limit reached (3 scans). Please upgrade to Professional to continue.")
     
-    # Pricing Section
-    st.subheader("Your Subscription Plan")
-    country = st.selectbox(
-        "Select your country",
-        ["India", "USA", "UK", "Germany", "Nigeria", "Other"]
-    )
-    pricing = get_pricing(country)
+    # AAPKA ADDED PRICING CODE
+    pricing = get_pricing(user_country)
+
+    st.subheader("Pro Subscription")
 
     st.markdown(
         f"""
-        ### Pro Plan
         **Price:** {pricing['currency']}{pricing['price']} / month  
         **Includes:**
         - Unlimited invoice scans
         - Compliance risk detection
-        - PDF audit reports
-        - Notice reply drafts
+        - Audit-ready PDF reports
+        - Regulatory notice drafts
         """
     )
     
     if st.button(f"🚀 Upgrade to Pro ({pricing['currency']}{pricing['price']})"):
-        st.info("Redirecting to payment gateway...")
+        st.info("Processing upgrade...")
     
     st.stop()
 
@@ -160,7 +157,6 @@ if uploaded_file:
     if st.button("Analyze Compliance"):
         with st.spinner("Performing regulatory analysis..."):
             
-            # --- SENIOR AUDITOR PROMPT ---
             prompt = f"""
             You are a senior global compliance auditor with experience in taxation, invoicing regulations, and trade laws across multiple jurisdictions.
 
