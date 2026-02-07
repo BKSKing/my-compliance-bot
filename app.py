@@ -29,6 +29,8 @@ stripe.api_key = st.secrets["STRIPE_SECRET_KEY"]
 
 if "user" not in st.session_state:
     st.session_state.user = None
+if "open_razorpay" not in st.session_state:
+    st.session_state.open_razorpay = False
 
 # ---------------- PAGE SETUP ----------------
 st.set_page_config(page_title="ComplianceBot AI", page_icon="🛡️", layout="wide")
@@ -92,7 +94,7 @@ plan = user_data.get("plan", "free")
 scans_used = user_data.get("scans_used", 0)
 user_country = user_data.get("country") or "IN"
 
-# 💎 SIDEBAR (FIXED UI & LOGIC)
+# 💎 SIDEBAR
 st.sidebar.title("💎 Membership")
 if st.session_state.user:
     st.sidebar.write(f"User: **{st.session_state.user.email}**")
@@ -107,7 +109,7 @@ else:
     st.sidebar.success("Pro Plan: Unlimited Scans")
 
 if st.sidebar.button("Logout"):
-    st.session_state.clear() # Clear all state
+    st.session_state.clear()
     st.rerun()
 
 # ---------------- FUNCTIONS ----------------
@@ -155,11 +157,39 @@ if uploaded_file:
             if pricing["provider"] == "stripe":
                 url = create_stripe_checkout(pricing["price_id"], st.session_state.user.email)
                 st.link_button("🚀 Upgrade to Pro", url)
+            
             elif pricing["provider"] == "razorpay":
                 if st.button("🚀 Upgrade via Razorpay"):
+                    st.session_state.open_razorpay = True
+                
+                # Razorpay Popup Logic (Outside button click to avoid JS iframe issues)
+                if st.session_state.open_razorpay:
                     order = create_razorpay_order(pricing["price"], st.session_state.user.email)
-                    razorpay_html = f"""<script src="https://checkout.razorpay.com/v1/checkout.js"></script><script>var options = {{"key": "{st.secrets['RAZORPAY_KEY_ID']}","amount": "{order['amount']}","currency": "INR","name": "ComplianceBot AI","order_id": "{order['id']}","handler": function (response) {{window.parent.location.href = window.parent.location.origin + window.parent.location.pathname + "?razorpay_payment_id=" + response.razorpay_payment_id + "&razorpay_order_id=" + response.razorpay_order_id + "&razorpay_signature=" + response.razorpay_signature;}},"prefill": {{ "email": "{st.session_state.user.email}" }},"theme": {{ "color": "#0f172a" }}}};var rzp = new Razorpay(options);rzp.open();</script>"""
-                    components.html(razorpay_html, height=0)
+                    razorpay_html = f"""
+                    <script src="https://checkout.razorpay.com/v1/checkout.js"></script>
+                    <script>
+                        var options = {{
+                            "key": "{st.secrets['RAZORPAY_KEY_ID']}",
+                            "amount": "{order['amount']}",
+                            "currency": "INR",
+                            "name": "ComplianceBot AI",
+                            "description": "Pro Subscription",
+                            "order_id": "{order['id']}",
+                            "handler": function (response) {{
+                                window.location.href = window.location.origin + window.location.pathname + 
+                                  "?razorpay_payment_id=" + response.razorpay_payment_id +
+                                  "&razorpay_order_id=" + response.razorpay_order_id +
+                                  "&razorpay_signature=" + response.razorpay_signature;
+                            }},
+                            "prefill": {{ "email": "{st.session_state.user.email}" }},
+                            "theme": {{ "color": "#0f172a" }}
+                        }};
+                        var rzp = new Razorpay(options);
+                        rzp.open();
+                    </script>
+                    """
+                    components.html(razorpay_html, height=400)
+                    st.session_state.open_razorpay = False # Reset state
             st.stop()
 
         # 🟢 2. AUDITOR-GRADE ANALYSIS (Prompt preserved exactly)
@@ -206,9 +236,7 @@ if uploaded_file:
             json_data = extract_json_safely(completion.choices[0].message.content)
 
             if json_data:
-                # 🔥 FIX: Increment and RERUN to update sidebar immediately
                 increment_scan(st.session_state.user.email)
-                
                 ctx = json_data.get("invoice_context", {})
                 st.info(f"📍 Context: {ctx.get('transaction_type')} | {ctx.get('seller_country')} -> {ctx.get('buyer_country')}")
 
@@ -230,7 +258,6 @@ if uploaded_file:
                     st.balloons()
                     st.success("✅ No violations found. This invoice appears compliant.")
                 
-                # Small delay to let user see balloons before rerun if success
                 st.rerun() 
             else:
                 st.error("AI Error: JSON Parsing failed. Try again.")
