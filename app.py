@@ -124,19 +124,6 @@ def extract_text_from_pdf(pdf_file):
     reader = PdfReader(pdf_file)
     return "".join([page.extract_text() for page in reader.pages if page.extract_text()])
 
-def generate_compliance_pdf(df, notice_draft, context):
-    file_path = "Compliance_Audit_Report.pdf"
-    doc = SimpleDocTemplate(file_path)
-    styles = getSampleStyleSheet()
-    elements = [Paragraph("COMPLIANCE AUDIT REPORT", styles["Title"]), Spacer(1, 12)]
-    elements.append(Paragraph(f"Context: {context.get('transaction_type')}", styles["Normal"]))
-    table_data = [df.columns.tolist()] + df.values.tolist()
-    elements.append(Table(table_data))
-    elements.append(Paragraph("Draft Response:", styles["Heading2"]))
-    elements.append(Paragraph(notice_draft.replace("\n", "<br/>"), styles["Normal"]))
-    doc.build(elements)
-    return file_path
-
 # ---------------- MAIN APP ----------------
 st.title("🛡️ ComplianceBot AI")
 client = Groq(api_key=os.getenv("GROQ_API_KEY"))
@@ -150,42 +137,47 @@ if uploaded_file:
         if plan != "pro" and scans_used >= FREE_SCAN_LIMIT:
             st.warning("🚨 Free limit reached. Upgrade to Pro.")
             pricing = get_pricing(user_country)
+            
             if pricing["provider"] == "stripe":
                 url = create_stripe_checkout(pricing["price_id"], st.session_state.user.email)
                 st.link_button("🚀 Upgrade via Stripe", url)
+            
             elif pricing["provider"] == "razorpay":
+                # 🔥 DIRECT INJECTION LOGIC ADDED HERE
                 if st.button("🚀 Upgrade via Razorpay"):
-                    st.session_state.open_razorpay = True
-                
-                if st.session_state.open_razorpay:
-                    order = create_razorpay_order(pricing["price"], st.session_state.user.email)
-                    razorpay_html = f"""
-                    <script src="https://checkout.razorpay.com/v1/checkout.js"></script>
-                    <script>
-                        var options = {{
-                            "key": "{st.secrets['RAZORPAY_KEY_ID']}",
-                            "amount": "{order['amount']}",
-                            "currency": "INR",
-                            "name": "ComplianceBot AI",
-                            "order_id": "{order['id']}",
-                            "handler": function (response) {{
-                                window.location.href = window.location.origin + window.location.pathname + 
-                                  "?razorpay_payment_id=" + response.razorpay_payment_id +
-                                  "&razorpay_order_id=" + response.razorpay_order_id +
-                                  "&razorpay_signature=" + response.razorpay_signature;
-                            }},
-                            "prefill": {{ "email": "{st.session_state.user.email}" }},
-                            "theme": {{ "color": "#0f172a" }}
-                        }};
-                        var rzp = new Razorpay(options);rzp.open();
-                    </script>
-                    """
-                    components.html(razorpay_html, height=400)
-                    st.session_state.open_razorpay = False
+                    with st.spinner("Initializing Payment..."):
+                        order = create_razorpay_order(pricing["price"], st.session_state.user.email)
+                        
+                        if order:
+                            razorpay_js = f"""
+                            <script src="https://checkout.razorpay.com/v1/checkout.js"></script>
+                            <script>
+                                var options = {{
+                                    "key": "{st.secrets['RAZORPAY_KEY_ID']}",
+                                    "amount": "{order['amount']}",
+                                    "currency": "INR",
+                                    "name": "ComplianceBot AI",
+                                    "description": "Upgrade to Pro",
+                                    "order_id": "{order['id']}",
+                                    "handler": function (response) {{
+                                        window.parent.location.href = window.parent.location.origin + window.parent.location.pathname + 
+                                          "?razorpay_payment_id=" + response.razorpay_payment_id +
+                                          "&razorpay_order_id=" + response.razorpay_order_id +
+                                          "&razorpay_signature=" + response.razorpay_signature;
+                                    }},
+                                    "prefill": {{ "email": "{st.session_state.user.email}" }},
+                                    "theme": {{ "color": "#0f172a" }}
+                                }};
+                                var rzp = new Razorpay(options);
+                                rzp.open();
+                            </script>
+                            """
+                            components.html(razorpay_js, height=0, width=0)
+                        else:
+                            st.error("Razorpay order creation failed. Please check your API keys.")
             st.stop()
 
         with st.spinner("Senior Auditor is reviewing your invoice..."):
-            # PROMPT (Untouched as requested)
             prompt = f"""
             You are a senior global compliance auditor specialized in VAT, GST, and international trade laws.
             Analyze the invoice text below and identify strict compliance violations.
@@ -224,7 +216,6 @@ if uploaded_file:
             json_data = extract_json_safely(completion.choices[0].message.content)
 
             if json_data:
-                # Save scan details to DB for history
                 supabase.table("scans").insert({
                     "user_email": st.session_state.user.email,
                     "transaction_type": json_data.get("invoice_context", {}).get("transaction_type"),
@@ -243,18 +234,15 @@ if uploaded_file:
                     st.dataframe(df, use_container_width=True)
                 else:
                     st.success("✅ No violations found!")
-                
                 st.rerun()
 
-# --- 📜 SCAN HISTORY SECTION (ENHANCED) ---
+# --- 📜 SCAN HISTORY SECTION ---
 st.markdown("---")
 col_title, col_del = st.columns([4, 1])
 with col_title:
     st.subheader("📜 Your Scan History")
 
-history_resp = supabase.table("scans").select("*").eq(
-    "user_email", st.session_state.user.email
-).order("created_at", desc=True).limit(10).execute()
+history_resp = supabase.table("scans").select("*").eq("user_email", st.session_state.user.email).order("created_at", desc=True).limit(10).execute()
 
 if history_resp.data:
     with col_del:
@@ -271,10 +259,6 @@ if history_resp.data:
             c1.metric("Violations", scan['violation_count'])
             c2.write(f"**Jurisdiction:** {scan['transaction_type']}")
             c3.write(f"**Status:** Analysis Saved")
-            if scan.get('violation_count', 0) > 0:
-                st.warning("Issues identified. Check original report for details.")
-            else:
-                st.success("No compliance issues found.")
 else:
     st.info("No previous scans found.")
 
