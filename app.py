@@ -29,9 +29,9 @@ from razorpay_client import client as razorpay_client, create_razorpay_order
 # ---------------- PAGE SETUP ----------------
 st.set_page_config(page_title="ComplianceBot AI", page_icon="🛡️", layout="wide")
 
-# ✅ GOOGLE SITE VERIFICATION (UPDATED WITH YOUR CODE)
+# ✅ UPDATED GOOGLE SITE VERIFICATION
 st.markdown("""
-<meta name="google-site-verification" content="wmkqs774jp0JH5" />
+<meta name="google-site-verification" content="wmkqs774jp0JH59dMZ2lLFrniPNuDrP95O0K0zPcl8U" />
 """, unsafe_allow_html=True)
 
 # --- CONFIGURATION ---
