@@ -8,7 +8,7 @@ from groq import Groq
 from PyPDF2 import PdfReader
 from reportlab.platypus import SimpleDocTemplate, Paragraph, Table, Spacer
 from reportlab.lib.styles import getSampleStyleSheet, ParagraphStyle
-from reportlab.lib.enums import TA_CENTER
+from reportlab.lib.enums import TA_CENTER, TA_LEFT
 from reportlab.lib import colors
 from reportlab.lib.pagesizes import A4
 from reportlab.lib.units import inch
@@ -36,10 +36,9 @@ if "user" not in st.session_state:
 # ---------------- PAGE SETUP ----------------
 st.set_page_config(page_title="ComplianceBot AI", page_icon="🛡️", layout="wide")
 
-# ✅ PAYMENT HANDLERS (Stripe & Razorpay Verification)
+# ✅ PAYMENT HANDLERS
 params = st.query_params
 
-# Stripe Verification
 if params.get("payment") == "success":
     session_id = params.get("session_id")
     if session_id:
@@ -52,7 +51,6 @@ if params.get("payment") == "success":
         except Exception as e:
             st.error(f"Stripe Error: {e}")
 
-# Razorpay Verification
 if "razorpay_payment_id" in params:
     try:
         razorpay_client.utility.verify_payment_signature({
@@ -80,49 +78,58 @@ def calculate_risk_summary(df):
 
 def generate_compliance_pdf(df, notice_draft, context):
     file_path = "Compliance_Audit_Report.pdf"
-    doc = SimpleDocTemplate(file_path, pagesize=A4, rightMargin=40, leftMargin=40, topMargin=50, bottomMargin=40)
+    doc = SimpleDocTemplate(file_path, pagesize=A4, rightMargin=30, leftMargin=30, topMargin=50, bottomMargin=40)
     styles = getSampleStyleSheet()
+    
     styles.add(ParagraphStyle(name="CoverTitle", fontSize=22, spaceAfter=20, alignment=TA_CENTER, fontName="Helvetica-Bold"))
     styles.add(ParagraphStyle(name="SectionHeader", fontSize=14, spaceBefore=20, spaceAfter=10, fontName="Helvetica-Bold", textColor=colors.black))
-    styles.add(ParagraphStyle(name="Body", fontSize=10, spaceAfter=8, leading=12))
+    styles.add(ParagraphStyle(name="Body", fontSize=9, spaceAfter=8, leading=11))
+    styles.add(ParagraphStyle(name="Disclaimer", fontSize=7, textColor=colors.grey, italic=True))
 
     elements = []
     risk = calculate_risk_summary(df)
 
+    # Cover Page
     elements.append(Spacer(1, 2 * inch))
-    elements.append(Paragraph("GLOBAL COMPLIANCE RISK ASSESSMENT REPORT", styles["CoverTitle"]))
-    elements.append(Spacer(1, 0.5 * inch))
-    elements.append(Paragraph(f"<b>Prepared for:</b> {st.session_state.user.email}<br/>"
-                              "<b>Prepared by:</b> ComplianceBot AI (Independent Auditor)<br/>"
-                              "<b>Classification:</b> Confidential & Privileged", styles["Body"]))
+    elements.append(Paragraph("FORENSIC COMPLIANCE AUDIT REPORT", styles["CoverTitle"]))
+    elements.append(Paragraph(f"<b>Transaction:</b> {context.get('transaction_type', 'N/A')}<br/>"
+                              f"<b>Route:</b> {context.get('seller_country')} → {context.get('buyer_country')}", styles["Body"]))
     elements.append(Spacer(1, 2 * inch))
 
-    elements.append(Paragraph("Board-Level Executive Summary", styles["SectionHeader"]))
-    elements.append(Paragraph(f"""
-        This independent assessment identifies material regulatory risks for a <b>{context.get('transaction_type')}</b> transaction.
-        <br/><br/><b>Key Findings:</b>
-        <ul>
-            <li>Total Issues Identified: {len(df)}</li>
-            <li>High-Risk Exposures: {risk['HIGH']}</li>
-            <li>Regulatory Scrutiny Probability: {risk['SCORE']}%</li>
-        </ul>
-        <b>Recommendation:</b> Immediate corrective action is required prior to audit submission.
-    """, styles["Body"]))
+    # Executive Summary
+    elements.append(Paragraph("Executive Summary", styles["SectionHeader"]))
+    elements.append(Paragraph(f"Analysis indicates a <b>{risk['SCORE']}%</b> regulatory scrutiny probability. High-risk exposures identified in statutory requirements.", styles["Body"]))
 
-    elements.append(Paragraph("Compliance Risk Heat-Map", styles["SectionHeader"]))
-    heatmap_data = [["Risk Category", "Incident Count"], ["Critical (High)", risk["HIGH"]], ["Warning (Medium)", risk["MEDIUM"]], ["Advisory (Low)", risk["LOW"]], ["Weighted Risk Score", f"{risk['SCORE']}%"]]
-    heatmap_table = Table(heatmap_data, colWidths=[2 * inch, 1.5 * inch])
-    heatmap_table.setStyle([('GRID', (0,0), (-1,-1), 0.5, colors.grey), ('BACKGROUND', (0,1), (1,1), colors.red), ('BACKGROUND', (0,2), (1,2), colors.orange), ('BACKGROUND', (0,3), (1,3), colors.lightgreen), ('FONT', (0,0), (-1,0), 'Helvetica-Bold')])
-    elements.append(heatmap_table)
-
+    # Table for Violations (Updated for Exposure & Probability)
     elements.append(Paragraph("Detailed Statutory Violations", styles["SectionHeader"]))
-    table_data = [["Violation", "Evidence", "Law Ref", "Risk"]] + df[["violation", "evidence_from_invoice", "law_reference", "risk_level"]].values.tolist()
-    v_table = Table(table_data, repeatRows=1, colWidths=[1.2*inch, 1.8*inch, 1.5*inch, 0.6*inch])
-    v_table.setStyle([('GRID', (0,0), (-1,-1), 0.5, colors.grey), ('FONTSIZE', (0,0), (-1,-1), 7), ('BACKGROUND', (0,0), (-1,0), colors.whitesmoke)])
-    elements.append(v_table)
+    
+    # Prepare Table Data
+    headers = ["Violation", "Risk", "Exposure (USD)", "Notice %"]
+    data = [headers]
+    for _, row in df.iterrows():
+        data.append([
+            row['violation'], 
+            row['risk_level'], 
+            row.get('financial_exposure', 'N/A'), 
+            row.get('regulatory_notice_probability_percent', 'N/A')
+        ])
+    
+    t = Table(data, colWidths=[2.2*inch, 0.8*inch, 1.5*inch, 1*inch])
+    t.setStyle([
+        ('GRID', (0,0), (-1,-1), 0.5, colors.grey),
+        ('BACKGROUND', (0,0), (-1,0), colors.whitesmoke),
+        ('FONTSIZE', (0,0), (-1,-1), 8),
+        ('FONTNAME', (0,0), (-1,0), 'Helvetica-Bold')
+    ])
+    elements.append(t)
 
-    elements.append(Paragraph("Draft Regulatory Response (Legal Defense)", styles["SectionHeader"]))
+    # Defensive Reply
+    elements.append(Paragraph("Legal Defense Strategy (Non-Admission)", styles["SectionHeader"]))
     elements.append(Paragraph(notice_draft.replace("\n", "<br/>"), styles["Body"]))
+
+    # Disclaimer
+    elements.append(Spacer(1, 0.5 * inch))
+    elements.append(Paragraph("DISCLAIMER: This report is generated by AI for advisory purposes. No admission of liability is intended. Consult legal counsel for formal filings.", styles["Disclaimer"]))
 
     doc.build(elements)
     return file_path
@@ -187,97 +194,136 @@ uploaded_file = st.file_uploader("Upload Invoice (PDF)", type="pdf")
 if uploaded_file:
     invoice_text = extract_text_from_pdf(uploaded_file)
     
-    # 🚨 PAYMENT GATING (Razorpay & Stripe Buttons)
     if plan != "pro" and scans_used >= FREE_SCAN_LIMIT:
         st.error("🚨 Free limit reached!")
         pricing = get_pricing(user_country)
         
-        # Stripe Option
         if pricing["provider"] == "stripe":
             st.link_button("🚀 Upgrade via Stripe", create_stripe_checkout(pricing["price_id"], st.session_state.user.email))
-        
-        # Razorpay Option (FIXED: Added Back)
         elif pricing["provider"] == "razorpay":
             if st.button("🚀 Pay & Upgrade with Razorpay"):
-                with st.spinner("Opening Secure Payment Gateway..."):
-                    order = create_razorpay_order(pricing["price"], st.session_state.user.email)
-                    if order:
-                        razorpay_js = f"""
-                        <script src="https://checkout.razorpay.com/v1/checkout.js"></script>
-                        <script>
-                            var options = {{
-                                "key": "{st.secrets['RAZORPAY_KEY_ID']}",
-                                "amount": "{order['amount']}",
-                                "currency": "INR",
-                                "name": "ComplianceBot AI",
-                                "description": "Upgrade to Pro",
-                                "order_id": "{order['id']}",
-                                "handler": function (response) {{
-                                    var url = window.parent.location.origin + window.parent.location.pathname + 
-                                      "?razorpay_payment_id=" + response.razorpay_payment_id +
-                                      "&razorpay_order_id=" + response.razorpay_order_id +
-                                      "&razorpay_signature=" + response.razorpay_signature;
-                                    window.parent.location.href = url;
-                                }},
-                                "prefill": {{ "email": "{st.session_state.user.email}" }},
-                                "theme": {{ "color": "#0f172a" }}
-                            }};
-                            var rzp = new Razorpay(options);
-                            rzp.open();
-                        </script>
-                        """
-                        components.html(razorpay_js, height=600)
+                order = create_razorpay_order(pricing["price"], st.session_state.user.email)
+                if order:
+                    razorpay_js = f"""
+                    <script src="https://checkout.razorpay.com/v1/checkout.js"></script>
+                    <script>
+                        var options = {{
+                            "key": "{st.secrets['RAZORPAY_KEY_ID']}",
+                            "amount": "{order['amount']}",
+                            "currency": "INR",
+                            "name": "ComplianceBot AI",
+                            "order_id": "{order['id']}",
+                            "handler": function (response) {{
+                                window.parent.location.href = window.parent.location.origin + window.parent.location.pathname + 
+                                  "?razorpay_payment_id=" + response.razorpay_payment_id +
+                                  "&razorpay_order_id=" + response.razorpay_order_id +
+                                  "&razorpay_signature=" + response.razorpay_signature;
+                            }},
+                            "prefill": {{ "email": "{st.session_state.user.email}" }},
+                            "theme": {{ "color": "#0f172a" }}
+                        }};
+                        var rzp = new Razorpay(options);
+                        rzp.open();
+                    </script>
+                    """
+                    components.html(razorpay_js, height=600)
         st.stop()
 
+    # 🔴 ANALYZE SECTION (PRODUCTION-GRADE)
     if st.button("Analyze Compliance"):
         with st.spinner("Senior Auditor is conducting forensic review..."):
-            # 🔥 PROMPT (UNCHANGED as requested)
+
             prompt = f"""
-            You are a Tier-1 Global Compliance Auditor (McKinsey/Big-4). 
-            Perform a legally defensible, forensic audit of the provided invoice.
+    You are a Tier-1 Global Compliance Auditor (Big4 / McKinsey standard).
+    Perform a legally defensible forensic audit.
 
-            STEP 1 — JURISDICTION MAPPING:
-            Extract Seller/Buyer Country, Transaction Type (Domestic/Cross-border), and Nature of Supply.
+    CRITICAL LEGAL INSTRUCTIONS (MANDATORY):
+    - Do NOT use apology language.
+    - Do NOT admit fault.
+    - Use NON-ADMISSION wording: "without prejudice", "under review", "no admission of liability".
 
-            STEP 2 — MANDATORY LEGAL AUDIT:
-            Verify: Supplier/Buyer IDs, Tax Rates, Date, Invoice #, Place of Supply, Reverse Charge/Zero-Rated mentions, Currency compliance.
+    STEP 1 — JURISDICTION MAPPING:
+    Identify seller country, buyer country, transaction type, nature of supply.
 
-            STEP 3 — VIOLATION TABLE:
-            Identify EVERY breach with: Violation Title, Quoted Evidence, Law Reference (Act/Section), Risk Level (Low/Med/High), Financial Exposure ($), and Probability of Notice (%).
+    STEP 2 — STATUTORY VIOLATIONS (STRICT):
+    Flag ALL real breaches including:
+    - Missing Supplier EIN / Tax ID
+    - Missing Buyer VAT ID
+    - Incorrect VAT on cross-border B2B SaaS
+    - Missing Reverse Charge (MANDATORY = MEDIUM/HIGH risk)
+    - Missing invoice number
+    - Missing place of supply
+    - Currency / FX compliance
 
-            STEP 4 — DEFENSIVE LEGAL REPLY:
-            Draft a formal, lawyer-grade response to a Tax Authority/Regulator regarding these discrepancies.
+    STEP 3 — RISK CALIBRATION:
+    - Reverse Charge omission + wrong VAT = HIGH risk
+    - Assign realistic financial exposure ranges (USD).
+    - Assign regulatory notice probability (0–100%).
 
-            OUTPUT STRICT JSON ONLY:
-            {{
-              "invoice_context": {{ "seller_country": "", "buyer_country": "", "transaction_type": "", "nature_of_supply": "" }},
-              "violations": [
-                {{ "violation": "", "evidence_from_invoice": "", "law_reference": "", "risk_level": "HIGH", "financial_exposure": "", "regulatory_notice_probability_percent": "" }}
-              ],
-              "notice_reply_draft": ""
-            }}
-            Invoice Text: {invoice_text}
-            """
+    STEP 4 — DEFENSIVE LEGAL RESPONSE:
+    Draft a LAWYER-GRADE reply:
+    - No apology
+    - No admission
+    - Professional, defensive tone
+    - Suitable for EU / IRS regulators
 
-            completion = client.chat.completions.create(model="llama-3.3-70b-versatile", messages=[{"role": "user", "content": prompt}])
+    OUTPUT STRICT JSON ONLY:
+    {{
+      "invoice_context": {{
+        "seller_country": "",
+        "buyer_country": "",
+        "transaction_type": "",
+        "nature_of_supply": ""
+      }},
+      "violations": [
+        {{
+          "violation": "",
+          "evidence_from_invoice": "",
+          "law_reference": "",
+          "risk_level": "HIGH",
+          "financial_exposure": "USD 20,000 – 40,000",
+          "regulatory_notice_probability_percent": "70–90%"
+        }}
+      ],
+      "notice_reply_draft": ""
+    }}
+
+    Invoice Text:{invoice_text}
+    """
+
+            completion = client.chat.completions.create(
+                model="llama-3.3-70b-versatile",
+                messages=[{"role": "user", "content": prompt}]
+            )
+
             json_data = extract_json_safely(completion.choices[0].message.content)
 
-            if json_data:
-                supabase.table("scans").insert({
-                    "user_email": str(st.session_state.user.email),
-                    "transaction_type": str(json_data.get("invoice_context", {}).get("transaction_type", "Unknown")),
-                    "violation_count": int(len(json_data.get("violations", []))),
-                    "risk_score": str("High" if any(v.get('risk_level', '').upper() == 'HIGH' for v in json_data.get('violations', [])) else "Low")
-                }).execute()
-                increment_scan(st.session_state.user.email)
-                
-                st.success("Audit Complete.")
-                df = pd.DataFrame(json_data["violations"])
-                st.dataframe(df, use_container_width=True)
-                
-                pdf_file = generate_compliance_pdf(df, json_data["notice_reply_draft"], json_data["invoice_context"])
-                with open(pdf_file, "rb") as f:
-                    st.download_button("📂 Download McKinsey-Style Audit Report", f, file_name=pdf_file)
+            if not json_data:
+                st.error("AI parsing failed. Retry.")
+                st.stop()
+
+            df = pd.DataFrame(json_data["violations"])
+            increment_scan(st.session_state.user.email)
+
+            st.success("Forensic Audit Completed")
+
+            ctx = json_data["invoice_context"]
+            st.info(f"📍 {ctx['transaction_type']} | {ctx['seller_country']} → {ctx['buyer_country']}")
+
+            st.subheader("⚠️ Statutory Violations")
+            st.dataframe(df, use_container_width=True)
+
+            st.subheader("🧑‍⚖️ Draft Regulatory Response (Non-Admission)")
+            st.text_area(
+                "Lawyer-Grade Reply",
+                json_data["notice_reply_draft"],
+                height=220
+            )
+
+            pdf_file = generate_compliance_pdf(df, json_data["notice_reply_draft"], ctx)
+
+            with open(pdf_file, "rb") as f:
+                st.download_button("📂 Download McKinsey-Style Audit Report", f, file_name=pdf_file)
 
 # --- 📜 HISTORY ---
 st.markdown("---")
