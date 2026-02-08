@@ -29,8 +29,8 @@ stripe.api_key = st.secrets["STRIPE_SECRET_KEY"]
 
 if "user" not in st.session_state:
     st.session_state.user = None
-if "open_razorpay" not in st.session_state:
-    st.session_state.open_razorpay = False
+if "trigger_razorpay" not in st.session_state:
+    st.session_state.trigger_razorpay = False
 
 # ---------------- PAGE SETUP ----------------
 st.set_page_config(page_title="ComplianceBot AI", page_icon="🛡️", layout="wide")
@@ -128,6 +128,41 @@ def extract_text_from_pdf(pdf_file):
 st.title("🛡️ ComplianceBot AI")
 client = Groq(api_key=os.getenv("GROQ_API_KEY"))
 
+# 🔥 RAZORPAY MODAL HANDLER (Fixed for Iframe Sandbox)
+if st.session_state.trigger_razorpay:
+    pricing = get_pricing(user_country)
+    with st.spinner("Initializing Razorpay..."):
+        order = create_razorpay_order(pricing["price"], st.session_state.user.email)
+        if order:
+            razorpay_js = f"""
+            <script src="https://checkout.razorpay.com/v1/checkout.js"></script>
+            <script>
+                var options = {{
+                    "key": "{st.secrets['RAZORPAY_KEY_ID']}",
+                    "amount": "{order['amount']}",
+                    "currency": "INR",
+                    "name": "ComplianceBot AI",
+                    "description": "Upgrade to Pro",
+                    "order_id": "{order['id']}",
+                    "handler": function (response) {{
+                        window.parent.location.href = window.parent.location.origin + window.parent.location.pathname + 
+                          "?razorpay_payment_id=" + response.razorpay_payment_id +
+                          "&razorpay_order_id=" + response.razorpay_order_id +
+                          "&razorpay_signature=" + response.razorpay_signature;
+                    }},
+                    "prefill": {{ "email": "{st.session_state.user.email}" }},
+                    "theme": {{ "color": "#0f172a" }}
+                }};
+                var rzp = new Razorpay(options);
+                rzp.open();
+            </script>
+            """
+            components.html(razorpay_js, height=600)
+            # Reset state but allow the script to run once
+            st.session_state.trigger_razorpay = False
+        else:
+            st.error("Failed to create Razorpay order.")
+
 uploaded_file = st.file_uploader("Upload Invoice (PDF)", type="pdf")
 
 if uploaded_file:
@@ -143,41 +178,13 @@ if uploaded_file:
                 st.link_button("🚀 Upgrade via Stripe", url)
             
             elif pricing["provider"] == "razorpay":
-                # 🔥 DIRECT INJECTION LOGIC ADDED HERE
-                if st.button("🚀 Upgrade via Razorpay"):
-                    with st.spinner("Initializing Payment..."):
-                        order = create_razorpay_order(pricing["price"], st.session_state.user.email)
-                        
-                        if order:
-                            razorpay_js = f"""
-                            <script src="https://checkout.razorpay.com/v1/checkout.js"></script>
-                            <script>
-                                var options = {{
-                                    "key": "{st.secrets['RAZORPAY_KEY_ID']}",
-                                    "amount": "{order['amount']}",
-                                    "currency": "INR",
-                                    "name": "ComplianceBot AI",
-                                    "description": "Upgrade to Pro",
-                                    "order_id": "{order['id']}",
-                                    "handler": function (response) {{
-                                        window.parent.location.href = window.parent.location.origin + window.parent.location.pathname + 
-                                          "?razorpay_payment_id=" + response.razorpay_payment_id +
-                                          "&razorpay_order_id=" + response.razorpay_order_id +
-                                          "&razorpay_signature=" + response.razorpay_signature;
-                                    }},
-                                    "prefill": {{ "email": "{st.session_state.user.email}" }},
-                                    "theme": {{ "color": "#0f172a" }}
-                                }};
-                                var rzp = new Razorpay(options);
-                                rzp.open();
-                            </script>
-                            """
-                            components.html(razorpay_js, height=0, width=0)
-                        else:
-                            st.error("Razorpay order creation failed. Please check your API keys.")
+                # Set trigger and rerun to handle nesting issue
+                st.session_state.trigger_razorpay = True
+                st.rerun()
             st.stop()
 
         with st.spinner("Senior Auditor is reviewing your invoice..."):
+            # PROMPT REMAINS UNTOUCHED AS REQUESTED
             prompt = f"""
             You are a senior global compliance auditor specialized in VAT, GST, and international trade laws.
             Analyze the invoice text below and identify strict compliance violations.
@@ -225,7 +232,6 @@ if uploaded_file:
                 
                 increment_scan(st.session_state.user.email)
                 
-                # Show results UI
                 ctx = json_data.get("invoice_context", {})
                 st.info(f"📍 Context: {ctx.get('transaction_type')} | {ctx.get('seller_country')} -> {ctx.get('buyer_country')}")
                 if json_data.get("violations"):
