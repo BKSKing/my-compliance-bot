@@ -217,11 +217,12 @@ if uploaded_file:
             json_data = extract_json_safely(completion.choices[0].message.content)
 
             if json_data:
+                # --- SAFE DATABASE INSERTION ---
                 supabase.table("scans").insert({
-                    "user_email": st.session_state.user.email,
-                    "transaction_type": json_data.get("invoice_context", {}).get("transaction_type"),
-                    "violation_count": len(json_data.get("violations", [])),
-                    "risk_score": "High" if any(v['risk_level'] == 'HIGH' for v in json_data.get('violations', [])) else "Low"
+                    "user_email": str(st.session_state.user.email),
+                    "transaction_type": str(json_data.get("invoice_context", {}).get("transaction_type", "Unknown")),
+                    "violation_count": int(len(json_data.get("violations", []))),
+                    "risk_score": str("High" if any(v.get('risk_level', '').upper() == 'HIGH' for v in json_data.get('violations', [])) else "Low")
                 }).execute()
                 
                 increment_scan(st.session_state.user.email)
